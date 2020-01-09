@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
+ * Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
  * Cypress Semiconductor Corporation. All Rights Reserved.
  *
  * This software, including source code, documentation and related
@@ -50,7 +50,7 @@
 #include "wiced_bt_trace.h"
 #include "mesh_application.h"
 
-#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined (CYW20819A1) )
+#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined (CYW20819A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
 #include "wiced_memory.h"
 #elif ( defined(CYW20735B0) || defined(CYW20735B1) )
 #include "wiced_gki.h"

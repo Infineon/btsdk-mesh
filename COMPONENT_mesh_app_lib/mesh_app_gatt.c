@@ -1,5 +1,5 @@
 /*
-* Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
+* Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
 * Cypress Semiconductor Corporation. All Rights Reserved.
 *
 * This software, including source code, documentation and related
@@ -37,7 +37,7 @@
  *
  */
 // Comment out next line to disable proprietary command GATT service
-#define _DEB_COMMAND_SERVICE
+//#define _DEB_COMMAND_SERVICE
 
 #include "bt_types.h"
 #include "wiced_bt_gatt.h"
@@ -365,6 +365,7 @@ uint8_t mesh_proxy_client_config[2] = { 0 };
 uint8_t mesh_cmd_client_config[2]   = { BIT16_TO_8(GATT_CLIENT_CONFIG_NOTIFICATION) };
 #endif
 uint16_t conn_id = 0;
+uint16_t conn_mtu = 20; // MTU to use in wiced_bt_mesh_core_connection_status() at notifications enable
 mesh_gatt_cb_t mesh_gatt_cb;
 
 attribute_t gauAttributes[] =
@@ -579,6 +580,8 @@ wiced_bt_gatt_status_t mesh_gatts_req_cb(wiced_bt_gatt_attribute_request_t *p_da
 
     case GATTS_REQ_TYPE_MTU:
         WICED_BT_TRACE("mesh_gatts_req_cb:GATTS_REQ_TYPE_MTU mtu:%x\n", p_data->data.mtu);
+        // We will use that MTU in wiced_bt_mesh_core_connection_status() at notifications enable
+        conn_mtu = p_data->data.mtu;
         wiced_bt_mesh_core_set_gatt_mtu(p_data->data.mtu);
         result = WICED_BT_GATT_SUCCESS;
         break;
@@ -620,22 +623,28 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
 
             if (p_data->connection_status.connected)
             {
+                // on connection up return proxy advert interval to 0.5 sec
+                // On connection up core stops proxy adverts.On next disconnection it will start adverts with interval 800
+                wiced_bt_mesh_core_proxy_adv_interval = 800;
+
                 conn_id = p_data->connection_status.conn_id;
+                // When connection is established, the default MTU is 23 bytes which makes max message length 20
+                conn_mtu = 20;
                 //wiced_bt_l2cap_update_ble_conn_params(p_data->connection_status.bd_addr, 30, 48, 0, 200);
+                // We will call mesh_core's wiced_bt_mesh_core_connection_status() on notification enable (write 0x0001 to HANDLE_DESCR_MESH_PROXY_DATA_CLIENT_CONFIG)
             }
             else
             {
                 conn_id = 0;
+                // On disconnect ref_data is disconnection reason.
+                wiced_bt_mesh_core_connection_status(0, WICED_FALSE, p_data->connection_status.reason, 20);
             }
-            // When connection is established, the default MTU is 23 bytes which makes max message length 20
-            // On disconnect ref_data is disconnection reason.
-            wiced_bt_mesh_core_connection_status(conn_id, WICED_FALSE, conn_id != 0 ? 0 : p_data->connection_status.reason, 20);
     #ifndef WICEDX_LINUX
             // Pass connection up/down event to the OTA FW upgrade library
             {
                 wiced_bt_gatt_connection_status_t connection_status = { 0 };
-                connection_status.connected = conn_id ? WICED_TRUE : WICED_FALSE;
-                connection_status.conn_id = conn_id;
+                connection_status.connected = p_data->connection_status.connected;
+                connection_status.conn_id = p_data->connection_status.connected ? p_data->connection_status.conn_id : 0;
                 connection_status.bd_addr = p_data->connection_status.bd_addr;
                 wiced_ota_fw_upgrade_connection_status_event(&connection_status);
             }
@@ -771,6 +780,18 @@ static wiced_bt_gatt_status_t mesh_write_handler(uint16_t conn_id, wiced_bt_gatt
                 memset(pAttr->p_attr, 0, pAttr->attr_len);
                 memcpy(pAttr->p_attr, attr, len <= pAttr->attr_len ? len : pAttr->attr_len);
             }
+
+#ifdef _DEB_COMMAND_SERVICE
+            if (p_data->handle != HANDLE_DESCR_MESH_PROXY_DATA_CLIENT_CONFIG && p_data->handle != HANDLE_DESCR_MESH_PROVISIONING_DATA_CLIENT_CONFIG)
+                break;
+#endif
+            // Use conn_mtu value to call wiced_bt_mesh_core_connection_status() just once - on first write to HANDLE_DESCR_MESH_PROXY_DATA_CLIENT_CONFIG
+            if (conn_mtu != 0)
+            {
+                wiced_bt_mesh_core_connection_status(conn_id, WICED_FALSE, 0, conn_mtu);
+                conn_mtu = 0;
+            }
+
             break;
 
         default:

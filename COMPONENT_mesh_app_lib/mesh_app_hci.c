@@ -1,5 +1,5 @@
 /*
-* Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
+* Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
 * Cypress Semiconductor Corporation. All Rights Reserved.
 *
 * This software, including source code, documentation and related
@@ -327,7 +327,7 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
 {
     uint16_t dst;
     uint16_t app_key_idx;
-    uint8_t  element_idx;
+    uint8_t  element_idx, ttl;
     int i;
     uint8_t  *p = *p_data;
     wiced_bt_mesh_event_t *p_event;
@@ -345,12 +345,17 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
 
         STREAM_TO_UINT8(p_event->reply, p);
         STREAM_TO_UINT8(p_event->send_segmented, p);
+
+        STREAM_TO_UINT8(ttl, p);
+        if(ttl <= 0x7F)
+            p_event->ttl = ttl;
+
         STREAM_TO_UINT8(p_event->retrans_cnt, p);
         STREAM_TO_UINT8(p_event->retrans_time, p);
         STREAM_TO_UINT8(p_event->reply_timeout, p);
         STREAM_TO_UINT16(p_event->num_in_group, p);
 
-        *len = *len - 7;
+        *len = *len - 8;
 
         if (p_event->num_in_group != 0)
         {
@@ -374,10 +379,10 @@ void wiced_bt_mesh_skip_wiced_hci_hdr(uint8_t **p_data, uint32_t *len)
     uint16_t num_in_group;
     uint8_t  *p = *p_data;
 
-    // skip dst, app_key_idx, element_idx, reply, send_segmented, retrans_cnt, retrans_time, reply_timeout
-    p += 10;
+    // skip dst (2), app_key_idx(2), element_idx(1), reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
+    p += 11;
     STREAM_TO_UINT16(num_in_group, p);
-    *len = *len - 12;
+    *len = *len - 13;
 
     if (num_in_group != 0)
     {
@@ -398,18 +403,16 @@ uint8_t wiced_bt_mesh_get_element_idx_from_wiced_hci(uint8_t **p_data, uint32_t 
     uint8_t  *p = *p_data;
     wiced_bt_mesh_event_t *p_event;
 
-    p += 4;  // skip dst and app_key_idx
+    p += 4;  // skip dst(2) and app_key_idx(2)
     STREAM_TO_UINT8(element_idx, p);
 
     *len = *len - 5;
 
-    p += 5;             // reply, send_segmented, retrans_cnt, retrans_time, reply_timeout
+    p += 6;             // reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
     STREAM_TO_UINT16(num_in_group, p);
-    {
-        *len = *len - 6;
-        *len = *len - (2 * num_in_group);
-        p    = p + (2 * num_in_group);
-    }
+    *len = *len - 8;
+    *len = *len - (2 * num_in_group);
+    p    = p + (2 * num_in_group);
     *p_data = p;
     return element_idx;
 }

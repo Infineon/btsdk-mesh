@@ -1,5 +1,5 @@
 /*
-* Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
+* Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
 * Cypress Semiconductor Corporation. All Rights Reserved.
 *
 * This software, including source code, documentation and related
@@ -94,7 +94,7 @@ extern "C"
 
 #ifdef CYW20706A2
 #define NVRAM_ID_NODE_INFO          WICED_NVRAM_VSID_START
-#elif ( defined(CYW20719B1) || defined(CYW20719B0) || defined(CYW20721B1) || defined (CYW20819A1))
+#elif ( defined(CYW20719B1) || defined(CYW20719B0) || defined(CYW20721B1) || defined (CYW20819A1) || defined(CYW20719B2) || defined(CYW20721B2))
 #define NVRAM_ID_NODE_INFO          WICED_NVRAM_VSID_START
 #else
 #define NVRAM_ID_NODE_INFO  (WICED_NVRAM_VSID_START + 0x100)  // ID of the memory block used for NVRAM access (+0x100 - workaround to get rid of lost NVM IDs)

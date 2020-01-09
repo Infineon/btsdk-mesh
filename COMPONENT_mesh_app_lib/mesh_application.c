@@ -1,5 +1,5 @@
 /*
- * Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
+ * Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
  * Cypress Semiconductor Corporation. All Rights Reserved.
  *
  * This software, including source code, documentation and related
@@ -119,7 +119,7 @@ void wiced_bt_set_pairable_mode(uint8_t allow_pairing, uint8_t connect_only_pair
 // The power table is 3, -1, -5, -9
 #define TX_DBM   4
 
-#if !defined(CYW43012C0) && !defined(CYW20706A2)
+#if !defined(CYW43012C0) && !defined(CYW20706A2) && !defined(CYW20719B0)
 extern wiced_platform_button_config_t platform_button[];
 #endif
 
@@ -195,7 +195,9 @@ extern wiced_bt_cfg_settings_t wiced_bt_cfg_settings;
 extern const wiced_bt_cfg_buf_pool_t wiced_bt_cfg_buf_pools[];
 extern uint16_t wiced_bt_mesh_core_lpn_get_friend_addr(void);
 extern void wiced_bt_mesh_core_shutdown(void);
-
+#ifdef CYW20706A2
+extern void rtc_init();
+#endif
 // NVM index for SEQ
 uint16_t mesh_nvm_idx_seq;
 
@@ -395,15 +397,14 @@ void mesh_ota_firmware_upgrade_status_callback(uint8_t status)
 {
     WICED_BT_TRACE("mesh_ota_firmware_upgrade_status_callback: status:%d\n", status);
 
-#ifdef CYW20706A2
     // Due to a FW bug in 20706A2, the chip may crash if too many advertisements arrive
     // while we are reading the SFLASH.  To work around the problem, disable for the duration
     // while we are reading.
+    // It is useffull for all other platforms too for better FW buffer pool utilization for receiving adverts.
     if (status == OTA_FW_UPGRADE_STATUS_VERIFICATION_START)
         mesh_start_stop_scan_callback(WICED_FALSE, WICED_FALSE);
     else if (status == OTA_FW_UPGRADE_STATUS_ABORTED)
         mesh_start_stop_scan_callback(WICED_TRUE, WICED_FALSE);
-#endif
 }
 
 // This function is executed in the BTM_ENABLED_EVT management callback.
@@ -431,7 +432,7 @@ void mesh_application_init(void)
 
 #ifndef MESH_HOMEKIT_COMBO_APP
     /* Initialize wiced app */
-#if (!defined(CYW20735B1) && !defined(CYW20819A1))
+#if (!defined(CYW20735B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
     wiced_bt_app_init();
 #endif
 
@@ -446,12 +447,12 @@ void mesh_application_init(void)
     //remember if we are provisioner (config client)
     mesh_config_client = number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) > 0 ? WICED_TRUE : WICED_FALSE;
 
-#ifdef PTS
     // initialize core
     // each node shall be assigned a 128-bit UUID known as the Device UUID.
     // Device manufacturers shall follow the standard UUID format and generation
     // procedure to ensure the uniqueness of each Device UUID.
-    // for now device_uuid is local bda with hardcoded(0x0f) remaining bytes
+#ifdef PTS
+    // for PTS testing device_uuid is local bda with hardcoded(0x0f) remaining bytes
     wiced_bt_dev_read_local_addr(init.non_provisioned_bda);
     memcpy(init.provisioned_bda, init.non_provisioned_bda, sizeof(wiced_bt_device_address_t));
     memcpy(&init.device_uuid[0], init.non_provisioned_bda, 6);
@@ -600,7 +601,7 @@ void mesh_interrupt_handler(void* user_data, uint8_t pin)
     //WICED_BT_TRACE("interrupt_handler: pin:%d value:%d time:%d\n", pin, value, curr_time);
 
     // On push just remember current time.
-#if !defined(CYW43012C0) && !defined(CYW20706A2)
+#if !defined(CYW43012C0) && !defined(CYW20706A2) && !defined(CYW20719B0)
     if (value == platform_button[WICED_PLATFORM_BUTTON_1].button_pressed_value)
 #else
     if (value == 0)
@@ -913,6 +914,11 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
 
     case WICED_BT_MESH_CORE_STATE_NODE_STATE:
         WICED_BT_TRACE("mesh_state_changed_cb: authenticated:%d provisioned:%d proxy_on:%d pb_adv:%d\n", node_authenticated, p_state->node_state.provisioned, p_state->node_state.proxy_on, p_state->node_state.pb_adv);
+        // If node just got provisioned in the connected state then it is end of PB_GATT.
+        // Make proxy advert interval 30 ms to make first connection more reliable - core will use this value to start advertising after disconnection.
+        if (mesh_app_gatt_is_connected() && !node_authenticated && p_state->node_state.provisioned)
+            wiced_bt_mesh_core_proxy_adv_interval = 48;
+
         pb_gatt_in_progress = p_state->node_state.pb_adv;
         // If node is LPN in unprovisioned state(!node_authenticated) then restart scan on PB-ADV start or on provisioning end to switch scan from low duty to high duty
         if ((mesh_config.features & WICED_BT_MESH_CORE_FEATURE_BIT_LOW_POWER) != 0
