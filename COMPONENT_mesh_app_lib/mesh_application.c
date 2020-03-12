@@ -123,6 +123,13 @@ void wiced_bt_set_pairable_mode(uint8_t allow_pairing, uint8_t connect_only_pair
 extern wiced_platform_button_config_t platform_button[];
 #endif
 
+// if defined then prints mesh stats every _DEB_PRINT_MESH_STATS seconds
+//#define _DEB_PRINT_MESH_STATS 30
+
+// dump wiced bt buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
+#define _DEB_PRINT_BUF_USE  5
+
+
 /******************************************************
  *          Structures
  ******************************************************/
@@ -161,10 +168,14 @@ static mesh_app_rpl_item_t *mesh_app_rpl_items = NULL;
 // Application can set this handler to process if it implements models layer (including configuration).
 wiced_bt_mesh_core_received_msg_handler_t p_app_model_message_handler = NULL;
 
-static wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t company_id, uint16_t opcode, uint16_t *p_model_id, wiced_bool_t *p_dont_save_rpl);
+static wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t company_id, uint16_t opcode, uint16_t *p_model_id, uint8_t* p_rpl_delay);
 static wiced_bool_t mesh_publication_callback(uint8_t elem_idx, uint16_t company_id, uint16_t model_id, uint16_t period);
+static void  mesh_app_timer(uint32_t count);
 
 wiced_bt_mesh_core_received_msg_handler_t p_proxy_status_message_handler = NULL;
+
+// Application has to assign config pointer to that variable at the startup
+extern wiced_bt_cfg_settings_t* p_wiced_bt_mesh_cfg_settings;
 
 /******************************************************
  *          Function Prototypes
@@ -211,6 +222,9 @@ uint8_t pb_priv_key[WICED_BT_MESH_PROVISION_PRIV_KEY_LEN] = { 0x52, 0x9A, 0xA0, 
 wiced_bool_t mesh_config_client = WICED_FALSE;
 wiced_bool_t node_authenticated = WICED_FALSE;
 wiced_bool_t pb_gatt_in_progress = WICED_FALSE;
+
+// app timer
+wiced_timer_t app_timer;
 
 /******************************************************
  *               Function Definitions
@@ -352,7 +366,7 @@ wiced_result_t mesh_management_cback(wiced_bt_management_evt_t event, wiced_bt_m
 
 #ifndef PTS
 extern void utilslib_delayUs(UINT32 delay);
-static void mesh_application_gen_uuid(uint8_t *uuid)
+void mesh_application_gen_uuid(uint8_t *uuid)
 {
     int                 i;
 #ifndef WICEDX_LINUX
@@ -370,7 +384,7 @@ static void mesh_application_gen_uuid(uint8_t *uuid)
     // - Set the four most significant bits(bits 12 through 15) of the
     //   time_hi_and_version field to the 4 - bit version number.
     // - Set all the other bits to randomly(or pseudo - randomly) chosen values.
-    * (uint32_t*)&uuid[0] = wiced_hal_rand_gen_num();
+    *(uint32_t*)&uuid[0] = wiced_hal_rand_gen_num();
     *(uint32_t*)&uuid[4] = wiced_hal_rand_gen_num();
     *(uint32_t*)&uuid[8] = wiced_hal_rand_gen_num();
     *(uint32_t*)&uuid[12] = wiced_hal_rand_gen_num();
@@ -378,12 +392,31 @@ static void mesh_application_gen_uuid(uint8_t *uuid)
     uuid[6] = (uuid[6] & 0x0f) | 0x40;
     // The variant field is 10B
     uuid[8] = (uuid[8] & 0x3f) | 0x80;
+
+#ifdef EMBEDDED_PROV_UUID_MAGIC_NUBMER
+    *(uint64_t*)&uuid[4] = EMBEDDED_PROV_UUID_MAGIC_NUBMER;
+
+    if (number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) > 0)
+        uuid[4] |= CY_MAGIC_RPR_SUPPORTED;
+    else
+        uuid[4] &= ~CY_MAGIC_RPR_SUPPORTED;
+
+    if ((mesh_config.features & WICED_BT_MESH_CORE_FEATURE_BIT_RELAY) != 0)
+        uuid[4] |= CY_MAGIC_RELAY_SUPPORTED;
+    else
+        uuid[4] &= ~CY_MAGIC_RELAY_SUPPORTED;
+#endif
 }
 #endif
 
 void mesh_application_factory_reset(void)
 {
     WICED_BT_TRACE("mesh_application_factory_reset: *************************\n");
+
+    // uncomment following lines to delete UUID from the NV. This will change UUID on factory reset.
+    // wiced_result_t result;
+    // mesh_nvram_access(WICED_TRUE, NVRAM_ID_LOCAL_UUID, NULL, 0, &result);
+
     if (wiced_bt_mesh_app_func_table.p_mesh_app_factory_reset)
     {
         wiced_bt_mesh_app_func_table.p_mesh_app_factory_reset();
@@ -400,7 +433,7 @@ void mesh_ota_firmware_upgrade_status_callback(uint8_t status)
     // Due to a FW bug in 20706A2, the chip may crash if too many advertisements arrive
     // while we are reading the SFLASH.  To work around the problem, disable for the duration
     // while we are reading.
-    // It is useffull for all other platforms too for better FW buffer pool utilization for receiving adverts.
+    // It is useful for all other platforms too for better FW buffer pool utilization for receiving adverts.
     if (status == OTA_FW_UPGRADE_STATUS_VERIFICATION_START)
         mesh_start_stop_scan_callback(WICED_FALSE, WICED_FALSE);
     else if (status == OTA_FW_UPGRADE_STATUS_ABORTED)
@@ -425,9 +458,9 @@ void mesh_application_init(void)
 #endif
 
 #if (defined(WICEDX_LINUX) || defined(MESH_CORE_DEBUG_LEVEL))
-    extern void wiced_bt_mesh_core_set_trace_level(uint32_t fids_mask, uint8_t level);
-    wiced_bt_mesh_core_set_trace_level(0xffffffff, 4);      //(ALL, TRACE_DEBUG)
-    wiced_bt_mesh_core_set_trace_level((1 << 3), 3);        // 3 - FID_MESH_APP__CORE_AES_CCM_C
+    // Set Debug trace level for all modules but Info level for CORE_AES_CCM module
+    wiced_bt_mesh_core_set_trace_level(WICED_BT_MESH_CORE_TRACE_FID_ALL, WICED_BT_MESH_CORE_TRACE_DEBUG);
+    wiced_bt_mesh_core_set_trace_level(WICED_BT_MESH_CORE_TRACE_FID_CORE_AES_CCM, WICED_BT_MESH_CORE_TRACE_INFO);
 #endif
 
 #ifndef MESH_HOMEKIT_COMBO_APP
@@ -484,6 +517,9 @@ void mesh_application_init(void)
 
     // Remove this line if MeshClient supports proxy on demand
     wiced_bt_mesh_core_proxy_on_demand_advert_to = 0;
+
+    //assign config pointer to that variable at the startup. remote_provision_server uses it
+    p_wiced_bt_mesh_cfg_settings = &wiced_bt_cfg_settings;
 
 #ifdef MESH_SUPPORT_PB_GATT
     mesh_config.features |= WICED_BT_MESH_CORE_FEATURE_BIT_PB_GATT;
@@ -561,28 +597,31 @@ static void mesh_adv_report(wiced_bt_ble_scan_results_t *p_scan_result, uint8_t 
     if (p_scan_result == NULL)
         return;
 
-#if defined REMOTE_PROVISION_SERVER_SUPPORTED
-
-    // if we do not want to provision new devices over GATT, only pass unconnectable adverts to RPR
-#if !defined REMOTE_PROVISION_OVER_GATT_SUPPORTED
-    if (p_scan_result->ble_evt_type != BTM_BLE_EVT_CONNECTABLE_ADVERTISEMENT)
-    {
-        processed = wiced_bt_mesh_remote_provisioning_adv_packet(p_scan_result, p_adv_data);
-    }
-#else
-    processed = wiced_bt_mesh_remote_provisioning_adv_packet(p_scan_result, p_adv_data);
-#endif
-    if (processed)
-        return;
-#endif
-#if defined GATT_PROXY_CLIENT_SUPPORTED
     if (p_scan_result->ble_evt_type == BTM_BLE_EVT_CONNECTABLE_ADVERTISEMENT)
     {
-        wiced_bt_mesh_gatt_client_process_connectable_adv(p_scan_result->remote_bd_addr, p_scan_result->ble_addr_type, p_scan_result->rssi, p_adv_data);
-    }
+        // if we do not want to provision new devices over GATT, only pass nonconnectable adverts to RPR
+#if defined REMOTE_PROVISION_SERVER_SUPPORTED && defined REMOTE_PROVISION_OVER_GATT_SUPPORTED
+        if (wiced_bt_mesh_remote_provisioning_connectable_adv_packet(p_scan_result, p_adv_data))
+            return;
 #endif
-    if (p_scan_result->ble_evt_type == BTM_BLE_EVT_NON_CONNECTABLE_ADVERTISEMENT)
+#if defined GATT_PROXY_CLIENT_SUPPORTED
+        wiced_bt_mesh_gatt_client_process_connectable_adv(p_scan_result->remote_bd_addr, p_scan_result->ble_addr_type, p_scan_result->rssi, p_adv_data);
+#endif
+    }
+    else if (p_scan_result->ble_evt_type == BTM_BLE_EVT_SCAN_RSP)
     {
+#if defined REMOTE_PROVISION_SERVER_SUPPORTED && defined REMOTE_PROVISION_OVER_GATT_SUPPORTED
+        if (wiced_bt_mesh_remote_provisioning_scan_rsp(p_scan_result, p_adv_data))
+            return;
+#endif
+    }
+    else if (p_scan_result->ble_evt_type == BTM_BLE_EVT_NON_CONNECTABLE_ADVERTISEMENT)
+    {
+#if REMOTE_PROVISION_SERVER_SUPPORTED
+        if (wiced_bt_mesh_remote_provisioning_nonconnectable_adv_packet(p_scan_result, p_adv_data))
+            return;
+#endif // if defined REMOTE_PROVISION_SERVER_SUPPORTED
+
         wiced_bt_mesh_core_adv_packet(p_scan_result->rssi, p_adv_data);
     }
 }
@@ -752,7 +791,7 @@ wiced_bool_t mesh_publication_callback(uint8_t elem_idx, uint16_t company_id, ui
 /*
  * Application implements that function to handle received messages. Call each library that this device needs to support.
  */
-wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t company_id, uint16_t opcode, uint16_t *p_model_id, wiced_bool_t *p_dont_save_rpl)
+wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t company_id, uint16_t opcode, uint16_t *p_model_id, uint8_t *p_rpl_delay)
 {
     wiced_bt_mesh_core_received_msg_handler_t p_message_handler = NULL;
     uint8_t                                   idx_elem, idx_model;
@@ -773,7 +812,7 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
         temp_event.company_id = company_id;
         temp_event.opcode     = opcode;
         temp_event.model_id   = 0xffff;   // it is a sign of special mode for model to just return true if the opcode is for that model, without message handling.
-                                          // Model library changes model_id to any other value if it wants do disable RPL saving for its messages
+        temp_event.status.rpl_delay = 5;  // By default save RPL after 5 seconds delay to reduce number of NVRAM writes if messages are coming too fast
 
         for (idx_elem = 0; idx_elem < mesh_config.elements_num; idx_elem++)
         {
@@ -790,9 +829,8 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
                 model_id = mesh_config.elements[idx_elem].models[idx_model].model_id;
                 if (p_model_id)
                     *p_model_id = model_id;
-                // Check if model wants to disable RPL saving for its messages
-                if (temp_event.model_id != 0xffff && p_dont_save_rpl != NULL)
-                    *p_dont_save_rpl = WICED_TRUE;
+                if (p_rpl_delay)
+                    *p_rpl_delay = temp_event.status.rpl_delay;
                 break;
             }
             if (idx_model < mesh_config.elements[idx_elem].models_num)
@@ -804,18 +842,19 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
     // Application may overwrite models library and receive raw core data.  Do not allow
     // to overwrite certain profiles though.
     if ((p_app_model_message_handler != NULL) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_SRV) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT) &&
-        (model_id != WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_CLNT))
+        ((company_id != MESH_COMPANY_ID_BT_SIG) ||
+         ((model_id != WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_CLNT))))
     {
         p_message_handler = p_app_model_message_handler;
     }
@@ -972,9 +1011,10 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
 
     case WICED_BT_MESH_CORE_STATE_LPN_SLEEP:
         WICED_BT_TRACE("mesh_state_changed_cb:LPN_SLEEP: timeout:%d\n", p_state->lpn_sleep);
-#ifdef HCI_CONTROL
-        mesh_app_hci_sleep();
-#endif
+        if (wiced_is_timer_in_use(&app_timer))
+        {
+            wiced_stop_timer(&app_timer);
+        }
         if (wiced_bt_mesh_app_func_table.p_mesh_app_lpn_sleep)
         {
             wiced_bt_mesh_app_func_table.p_mesh_app_lpn_sleep(p_state->lpn_sleep);
@@ -1020,7 +1060,8 @@ void mesh_setup_nvram_ids()
     uint16_t cfg_data_len = wiced_bt_mesh_get_node_config_size(&mesh_config) + WICED_BT_MESH_CORE_NVRAM_CHUNK_MAX_SIZE;
 
     wiced_bt_mesh_light_lc_nvram_id_start           = WICED_NVRAM_VSID_END                          - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_LC_SRV);
-    wiced_bt_mesh_light_hsl_nvram_id_start          = wiced_bt_mesh_light_lc_nvram_id_start         - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_HSL_SRV);
+    wiced_bt_mesh_light_lc_run_nvram_id_start       = wiced_bt_mesh_light_lc_nvram_id_start         - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_LC_SRV);
+    wiced_bt_mesh_light_hsl_nvram_id_start          = wiced_bt_mesh_light_lc_run_nvram_id_start     - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_HSL_SRV);
     wiced_bt_mesh_light_ctl_nvram_id_start          = wiced_bt_mesh_light_hsl_nvram_id_start        - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_CTL_SRV);
     wiced_bt_mesh_light_xyl_nvram_id_start          = wiced_bt_mesh_light_ctl_nvram_id_start        - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_XYL_SRV);
     wiced_bt_mesh_light_lightness_nvram_id_start    = wiced_bt_mesh_light_xyl_nvram_id_start        - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_LIGHTNESS_SRV);
@@ -1225,4 +1266,87 @@ uint8_t wiced_bt_mesh_base64_encode_6bits(uint8_t bin)
     else if (bin == 0x3e)
         res = (uint8_t)'+';
     return res;
+}
+
+void mesh_app_timer_init(void)
+{
+    /* Starting the app timer  */
+    memset(&app_timer, 0, sizeof(wiced_timer_t));
+    if (wiced_init_timer(&app_timer, mesh_app_timer, 0, WICED_SECONDS_PERIODIC_TIMER) == WICED_SUCCESS)
+    {
+        if (wiced_start_timer(&app_timer, MESH_APP_TIMEOUT_IN_SECONDS) != WICED_SUCCESS)
+        {
+            WICED_BT_TRACE("APP START Timer FAILED!!\n");
+        }
+    }
+    else
+    {
+        WICED_BT_TRACE("APP INIT Timer FAILED!!\n");
+    }
+}
+
+#ifdef _DEB_PRINT_BUF_USE
+// dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage
+void deb_print_buf_use()
+{
+    wiced_bt_buffer_statistics_t buff_stat[4];
+    wiced_bt_get_buffer_usage(buff_stat, sizeof(buff_stat));
+    WICED_BT_TRACE("pool size/cur/max/total %d/%d/%d/%d %d/%d/%d/%d %d/%d/%d/%d %d/%d/%d/%d\n",
+        buff_stat[0].pool_size, buff_stat[0].current_allocated_count, buff_stat[0].max_allocated_count, buff_stat[0].total_count,
+        buff_stat[1].pool_size, buff_stat[1].current_allocated_count, buff_stat[1].max_allocated_count, buff_stat[1].total_count,
+        buff_stat[2].pool_size, buff_stat[2].current_allocated_count, buff_stat[2].max_allocated_count, buff_stat[2].total_count,
+        buff_stat[3].pool_size, buff_stat[3].current_allocated_count, buff_stat[3].max_allocated_count, buff_stat[3].total_count);
+}
+#endif
+
+#ifdef _DEB_PRINT_MESH_STATS
+// dump mesh statistics on every _DEB_PRINT_MESH_STATS
+void deb_print_mesh_stats()
+{
+    wiced_bt_mesh_core_statistics_t network_stats;
+    wiced_bt_mesh_core_transport_statistics_t transport_stats;
+    wiced_bt_mesh_core_statistics_get(&network_stats);
+    wiced_bt_mesh_core_transport_statistics_get(&transport_stats);
+    wiced_bt_mesh_core_statistics_reset();
+    wiced_bt_mesh_core_transport_statistics_reset();
+    WICED_BT_TRACE("rcv msg cnt:total/proxy-cfg/relay/u-cast/group/lpn:       %d/%d/%d/%d/%d/%d\n",
+        network_stats.received_msg_cnt, network_stats.received_proxy_cfg_msg_cnt, network_stats.relayed_msg_cnt,
+        network_stats.accepted_unicast_msg_cnt, network_stats.accepted_group_msg_cnt, network_stats.received_for_lpn_msg_cnt);
+    WICED_BT_TRACE("dropped msg cnt:invalid/nid/decr/cache/relay-ttl/group:   %d/%d/%d/%d/%d/%d\n",
+        network_stats.dropped_invalid_msg_cnt, network_stats.dropped_by_nid_msg_cnt, network_stats.dropped_not_decrypted_msg_cnt,
+        network_stats.dropped_by_net_cache_msg_cnt, network_stats.not_relayed_by_ttl_msg_cnt, network_stats.dropped_group_msg_cnt);
+    WICED_BT_TRACE("sent msg cnt: adv/gatt/proxy_cfg/clnt/net-cred/frnd-cred: %d/%d/%d/%d/%d/%d\n",
+        network_stats.sent_adv_msg_cnt, network_stats.sent_gatt_msg_cnt, network_stats.sent_proxy_cfg_msg_cnt,
+        network_stats.sent_proxy_clnt_msg_cnt, network_stats.sent_net_credentials_msg_cnt, network_stats.sent_frnd_credentials_msg_cnt);
+    WICED_BT_TRACE("sent msg cnt: u-cast/group/access/unseg/seg/ack: %d/%d/%d/%d/%d/%d\n",
+        network_stats.sent_adv_unicast_msg_cnt, network_stats.sent_adv_group_msg_cnt,
+        transport_stats.sent_access_layer_msg_cnt, transport_stats.sent_unseg_msg_cnt, transport_stats.sent_seg_msg_cnt,
+        transport_stats.sent_ack_msg_cnt);
+    WICED_BT_TRACE("rcv msg cnt: access/unseg/seg/ack/dropped access: %d/%d/%d/%d\n",
+        transport_stats.received_access_layer_msg_cnt, transport_stats.received_unseg_msg_cnt, transport_stats.received_seg_msg_cnt,
+        transport_stats.received_ack_msg_cnt, transport_stats.dropped_access_layer_msg_cnt);
+}
+#endif
+
+
+// App timer event handler
+void mesh_app_timer(uint32_t arg)
+{
+    static uint32_t app_timer_count = 1;
+    app_timer_count++;
+
+#ifdef _DEB_PRINT_BUF_USE
+    /* dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage */
+    if (!(app_timer_count % _DEB_PRINT_BUF_USE))
+    {
+        deb_print_buf_use();
+    }
+#endif
+#ifdef _DEB_PRINT_MESH_STATS
+    // dump mesh statistics on every _DEB_PRINT_MESH_STATS
+    if ((app_timer_count % _DEB_PRINT_MESH_STATS) == 2)
+    {
+        deb_print_mesh_stats();
+    }
+#endif
 }

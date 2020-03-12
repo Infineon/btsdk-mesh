@@ -1465,7 +1465,7 @@ wiced_bool_t wiced_bt_mesh_provision_scan_get(wiced_bt_mesh_event_t *p_event)
 */
 wiced_bool_t wiced_bt_mesh_provision_scan_start(wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_scan_start_data_t *p_data)
 {
-    uint8_t  buffer[30];
+    uint8_t  buffer[35];
     uint8_t *p = wiced_bt_mesh_hci_header_from_event(p_event, buffer, sizeof(buffer));
 
     if (p == NULL)
@@ -1536,7 +1536,7 @@ wiced_bool_t wiced_bt_mesh_fw_provider_get_status(wiced_bt_mesh_event_t *p_event
 /*
  * The application can call this function to start firmware distribution procedure.
  */
-wiced_bool_t wiced_bt_mesh_fw_provider_start(wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_fw_distribution_start_data_t *p_data, wiced_bt_mesh_fw_provider_callback_t *p_callback)
+wiced_bool_t wiced_bt_mesh_fw_provider_start(wiced_bt_mesh_event_t* p_event, wiced_bt_mesh_fw_distribution_start_data_t* p_data, wiced_bt_mesh_fw_provider_callback_t* p_callback)
 {
     return WICED_FALSE;
 }
@@ -3121,7 +3121,9 @@ void wiced_bt_free_buffer(void *buf)
     free(buf);
 }
 
-wiced_bool_t wiced_bt_mesh_remote_provisioning_adv_packet(wiced_bt_ble_scan_results_t *p_adv_report, uint8_t *p_adv_data) { return WICED_TRUE;  }
+wiced_bool_t wiced_bt_mesh_remote_provisioning_scan_rsp(wiced_bt_ble_scan_results_t* p_adv_report, uint8_t* p_adv_data) { return WICED_TRUE; }
+wiced_bool_t wiced_bt_mesh_remote_provisioning_connectable_adv_packet(wiced_bt_ble_scan_results_t* p_adv_report, uint8_t* p_adv_data) { return WICED_TRUE; }
+wiced_bool_t wiced_bt_mesh_remote_provisioning_nonconnectable_adv_packet(wiced_bt_ble_scan_results_t* p_adv_report, uint8_t* p_adv_data) { return WICED_TRUE; }
 void wiced_bt_mesh_gatt_client_process_connectable_adv(uint8_t *remote_bd_addr, uint8_t ble_addr_type, int8_t rssi, uint8_t *p_adv_data) {}
 void wiced_bt_ble_set_scan_mode(uint8_t is_active) {}
 wiced_result_t wiced_bt_mesh_core_init(wiced_bt_mesh_core_init_t *p_init) { return WICED_SUCCESS; }

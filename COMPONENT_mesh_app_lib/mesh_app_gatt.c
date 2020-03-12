@@ -365,7 +365,7 @@ uint8_t mesh_proxy_client_config[2] = { 0 };
 uint8_t mesh_cmd_client_config[2]   = { BIT16_TO_8(GATT_CLIENT_CONFIG_NOTIFICATION) };
 #endif
 uint16_t conn_id = 0;
-uint16_t conn_mtu = 20; // MTU to use in wiced_bt_mesh_core_connection_status() at notifications enable
+uint16_t conn_mtu = 0; // MTU to use in wiced_bt_mesh_core_connection_status() at notifications enable
 mesh_gatt_cb_t mesh_gatt_cb;
 
 attribute_t gauAttributes[] =
@@ -628,14 +628,17 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
                 wiced_bt_mesh_core_proxy_adv_interval = 800;
 
                 conn_id = p_data->connection_status.conn_id;
-                // When connection is established, the default MTU is 23 bytes which makes max message length 20
-                conn_mtu = 20;
+                // When connection is established befor GATTS_REQ_TYPE_MTU, use the default MTU 23 bytes which makes max message length 20
+                // Otherwise don't change MTU
+                if(conn_mtu == 0)
+                    conn_mtu = 20;
                 //wiced_bt_l2cap_update_ble_conn_params(p_data->connection_status.bd_addr, 30, 48, 0, 200);
                 // We will call mesh_core's wiced_bt_mesh_core_connection_status() on notification enable (write 0x0001 to HANDLE_DESCR_MESH_PROXY_DATA_CLIENT_CONFIG)
             }
             else
             {
                 conn_id = 0;
+                conn_mtu = 0;
                 // On disconnect ref_data is disconnection reason.
                 wiced_bt_mesh_core_connection_status(0, WICED_FALSE, p_data->connection_status.reason, 20);
             }

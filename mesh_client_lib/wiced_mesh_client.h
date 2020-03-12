@@ -71,9 +71,6 @@
 #define DEVICE_TYPE_LOCATION_SERVER         14
 #define DEVICE_TYPE_LOCATION_CLIENT         15
 
-#define MESH_ERROR_BAD_COMPOSITION_DATA     1
-#define MESH_ERROR_NO_MEM                   2
-
 #define DEFAULT_TRANSITION_TIME             0xFFFFFFFF
 
 // Mesh event (wiced_bt_mesh_event_t) is created by default to use the application configured
@@ -101,6 +98,12 @@ typedef void(*mesh_client_unprovisioned_device_t)(uint8_t *uuid, uint16_t oob, u
 
 /*
  * Provisioned status callback is used by the mesh library to indicate the status of the provisioning process.
+ *
+ * After application calls mesh_client_provision, the callback may be executed several times
+ * indicating status of the provisioning. The end of the provisioning is always indicated
+ * by executing callback with status _SUCCESS or _FAILED. Note that in case of failure,
+ * the stack may still need to execute the key refresh procedure and may be busy.
+ *
  * After the provisioning has been completed successfully, the application can use
  * the mesh_client_get_device_components to find the list of the components of the device.
  * For example, a single device may be connected to a light and a fan. The app may use the
@@ -414,12 +417,11 @@ uint8_t mesh_client_get_component_info(char *component_name, mesh_client_compone
  * The function can be called to start DFU process
  */
 #define DFU_METHOD_PROXY_TO_ALL                     0
-#define DFU_METHOD_APP_TO_ALL                       1
-#define DFU_METHOD_APP_TO_DEVICE                    2
+#define DFU_METHOD_APP_TO_DEVICE                    1
 
-/*
- * Callback to return DFU event.
- */
+ /*
+  * Callback to return DFU event.
+  */
 typedef void(*mesh_client_dfu_event_t)(uint8_t event, uint8_t *p_event_data, uint32_t event_data_length);
 
 #define DFU_EVENT_START_OTA                         1

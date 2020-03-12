@@ -55,21 +55,11 @@
 #include "hcidefs.h"
 #endif
 
-// if defined then prints mesh stats every _DEB_PRINT_MESH_STATS seconds
-//#define _DEB_PRINT_MESH_STATS 30
-
-// dump wiced bt buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
-#define _DEB_PRINT_BUF_USE  5
-
 // Enables HCI trace to first(same as app download) com port.
 //#define _DEB_ENABLE_HCI_TRACE
 #define _DEB_ENABLE_HCI_TRACE_NO_BLE_ADV_EVT
 
 static void  mesh_hci_trace_cback(wiced_bt_hci_trace_type_t type, uint16_t length, uint8_t* p_data);
-static void  mesh_app_timer(uint32_t count);
-
-// app timer
-wiced_timer_t app_timer;
 
 /******************************************************
  *          Function Prototypes
@@ -119,33 +109,19 @@ void mesh_app_hci_init(void)
     wiced_hal_puart_select_uart_pads(WICED_PUART_RXD, WICED_PUART_TXD, 0, 0);
 #endif
 #ifndef CYW20706A2
-    wiced_hal_puart_configuration(921600, PARITY_NONE, STOP_BIT_1);
-#endif
+#ifdef CYW20735B1
+    wiced_hal_puart_set_baudrate(921600);
 #else
+    wiced_hal_puart_configuration(921600, PARITY_NONE, STOP_BIT_1);
+#endif // CYW20735B1
+#endif // CYW20706A2
+#else // _DEB_ENABLE_HCI_TRACE
     // WICED_ROUTE_DEBUG_TO_WICED_UART to send debug strings over the WICED debug interface */
     wiced_set_debug_uart(WICED_ROUTE_DEBUG_TO_WICED_UART);
-#endif
-#endif
-#endif
+#endif // _DEB_ENABLE_HCI_TRACE
+#endif // WICED_BT_TRACE_ENABLE
+#endif // WICEDX_LINUX
     wiced_bt_dev_register_hci_trace(mesh_hci_trace_cback);
-}
-
-void mesh_app_timer_init(void)
-{
-    /* Starting the app timer  */
-    memset(&app_timer, 0, sizeof(wiced_timer_t));
-    if (wiced_init_timer(&app_timer, mesh_app_timer, 0, WICED_SECONDS_PERIODIC_TIMER) == WICED_SUCCESS)
-    //if (wiced_init_timer(&app_timer, mesh_app_timer, 0, WICED_SECONDS_TIMER) == WICED_SUCCESS)
-    {
-        if (wiced_start_timer(&app_timer, MESH_APP_TIMEOUT_IN_SECONDS) != WICED_SUCCESS)
-        {
-            WICED_BT_TRACE("APP START Timer FAILED!!\n");
-        }
-    }
-    else
-    {
-        WICED_BT_TRACE("APP INIT Timer FAILED!!\n");
-    }
 }
 
 wiced_bt_mesh_hci_event_t *wiced_bt_mesh_create_hci_event(wiced_bt_mesh_event_t *p_event)
@@ -188,71 +164,6 @@ wiced_bt_mesh_hci_event_t *wiced_bt_mesh_alloc_hci_event(uint8_t element_idx)
 void mesh_transport_send_data(uint16_t opcode, uint8_t *p_trans_buf, uint16_t data_len)
 {
     wiced_transport_send_buffer(opcode, p_trans_buf, data_len);
-}
-
-#ifdef _DEB_PRINT_BUF_USE
-// dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage
-void _deb_print_buf_use()
-{
-    wiced_bt_buffer_statistics_t buff_stat[4];
-    wiced_bt_get_buffer_usage(buff_stat, sizeof(buff_stat));
-    WICED_BT_TRACE("pool size/cur/max/total %d/%d/%d/%d %d/%d/%d/%d %d/%d/%d/%d %d/%d/%d/%d\n",
-        buff_stat[0].pool_size, buff_stat[0].current_allocated_count, buff_stat[0].max_allocated_count, buff_stat[0].total_count,
-        buff_stat[1].pool_size, buff_stat[1].current_allocated_count, buff_stat[1].max_allocated_count, buff_stat[1].total_count,
-        buff_stat[2].pool_size, buff_stat[2].current_allocated_count, buff_stat[2].max_allocated_count, buff_stat[2].total_count,
-        buff_stat[3].pool_size, buff_stat[3].current_allocated_count, buff_stat[3].max_allocated_count, buff_stat[3].total_count);
-}
-#endif
-
-#ifdef _DEB_PRINT_MESH_STATS
-// dump mesh statistics on every _DEB_PRINT_MESH_STATS
-void _deb_print_mesh_stats()
-{
-    wiced_bt_mesh_core_statistics_t network_stats;
-    wiced_bt_mesh_core_transport_statistics_t transport_stats;
-    wiced_bt_mesh_core_statistics_get(&network_stats);
-    wiced_bt_mesh_core_transport_statistics_get(&transport_stats);
-    wiced_bt_mesh_core_statistics_reset();
-    wiced_bt_mesh_core_transport_statistics_reset();
-    WICED_BT_TRACE("rcv msg cnt:total/proxy-cfg/relay/u-cast/group/lpn:       %d/%d/%d/%d/%d/%d\n",
-        network_stats.received_msg_cnt, network_stats.received_proxy_cfg_msg_cnt, network_stats.relayed_msg_cnt,
-        network_stats.accepted_unicast_msg_cnt, network_stats.accepted_group_msg_cnt, network_stats.received_for_lpn_msg_cnt);
-    WICED_BT_TRACE("dropped msg cnt:invalid/nid/decr/cache/relay-ttl/group:   %d/%d/%d/%d/%d/%d\n",
-        network_stats.dropped_invalid_msg_cnt, network_stats.dropped_by_nid_msg_cnt, network_stats.dropped_not_decrypted_msg_cnt,
-        network_stats.dropped_by_net_cache_msg_cnt, network_stats.not_relayed_by_ttl_msg_cnt, network_stats.dropped_group_msg_cnt);
-    WICED_BT_TRACE("sent msg cnt: adv/gatt/proxy_cfg/clnt/net-cred/frnd-cred: %d/%d/%d/%d/%d/%d\n",
-        network_stats.sent_adv_msg_cnt, network_stats.sent_gatt_msg_cnt, network_stats.sent_proxy_cfg_msg_cnt,
-        network_stats.sent_proxy_clnt_msg_cnt, network_stats.sent_net_credentials_msg_cnt, network_stats.sent_frnd_credentials_msg_cnt);
-    WICED_BT_TRACE("sent msg cnt: u-cast/group/access/unseg/seg/ack: %d/%d/%d/%d/%d/%d\n",
-        network_stats.sent_adv_unicast_msg_cnt, network_stats.sent_adv_group_msg_cnt,
-        transport_stats.sent_access_layer_msg_cnt, transport_stats.sent_unseg_msg_cnt, transport_stats.sent_seg_msg_cnt,
-        transport_stats.sent_ack_msg_cnt);
-    WICED_BT_TRACE("rcv msg cnt: access/unseg/seg/ack/dropped access: %d/%d/%d/%d\n",
-        transport_stats.received_access_layer_msg_cnt, transport_stats.received_unseg_msg_cnt, transport_stats.received_seg_msg_cnt,
-        transport_stats.received_ack_msg_cnt, transport_stats.dropped_access_layer_msg_cnt);
-}
-#endif
-
-// App timer event handler
-void mesh_app_timer(uint32_t arg)
-{
-    static uint32_t app_timer_count = 1;
-    app_timer_count++;
-
-#ifdef _DEB_PRINT_BUF_USE
-    /* dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage */
-    if (!(app_timer_count % _DEB_PRINT_BUF_USE))
-    {
-        _deb_print_buf_use();
-    }
-#endif
-#ifdef _DEB_PRINT_MESH_STATS
-    // dump mesh statistics on every _DEB_PRINT_MESH_STATS
-    if ((app_timer_count % _DEB_PRINT_MESH_STATS) == 2)
-    {
-        _deb_print_mesh_stats();
-    }
-#endif
 }
 
 //  Pass protocol traces up through the UART
@@ -303,16 +214,25 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
     {
         STREAM_TO_UINT16(opcode, p_data);       // Get OpCode
         STREAM_TO_UINT16(payload_len, p_data);  // Gen Payload Length
-#ifdef MESH_APPLICATION_MCU_MEMORY
-        if(!mesh_application_process_hci_cmd(opcode, p_data, payload_len))
-#endif
-#ifdef PTS
-        if (wiced_bt_mesh_core_test_mode_signal(opcode, p_data, payload_len))
+#if defined MESH_APPLICATION_MCU_MEMORY || defined PTS
+        if (!mesh_application_process_hci_cmd(opcode, p_data, payload_len))
 #endif
         {
-            if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
+#ifdef PTS
+            WICED_BT_TRACE("***************opcode:  %x\n", opcode);
+            WICED_BT_TRACE("***************len:     %d\n", payload_len);
+            WICED_BT_TRACE_ARRAY(p_data, length - 4, "***************payload: ");
+            if (opcode == HCI_CONTROL_COMMAND_RESET)
             {
-                wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd(opcode, p_data, payload_len);
+                wiced_hal_wdog_reset_system();
+            }
+            else if (wiced_bt_mesh_core_test_mode_signal(opcode, p_data, payload_len))
+#endif
+            {
+                if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
+                {
+                    wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd(opcode, p_data, payload_len);
+                }
             }
         }
     }
@@ -427,7 +347,7 @@ void wiced_bt_mesh_send_hci_tx_complete(wiced_bt_mesh_hci_event_t *p_hci_event, 
     uint8_t num_addrs = 1;
     uint16_t    ui16val;
 
-    if ((p_event->tx_status) && (p_event->dst >= 0xC000))
+    if ((p_event->status.tx_flag) && (p_event->dst >= 0xC000))
     {
         num_addrs = 0;
         for (i = 0; i < p_event->num_in_group; i++)
@@ -440,10 +360,10 @@ void wiced_bt_mesh_send_hci_tx_complete(wiced_bt_mesh_hci_event_t *p_hci_event, 
     }
 
     UINT16_TO_STREAM(p, p_event->hci_opcode);
-    UINT8_TO_STREAM(p, p_event->tx_status);
+    UINT8_TO_STREAM(p, p_event->status.tx_flag);
 
     // if failed, put in all addresses from the Group that have not acked, otherwise just send out DST
-    if (p_event->tx_status)
+    if (p_event->status.tx_flag)
     {
         if (p_event->dst < 0xC000)
         {
@@ -484,12 +404,6 @@ void mesh_app_hci_send_seq_changed(wiced_bt_mesh_core_state_seq_t *p_seq)
         UINT16_TO_STREAM(p, p_seq->rpl_entry_idx);
         mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_CORE_SEQ_CHANGED, p_hci_event, (uint16_t)(p - p_hci_event));
     }
-}
-
-void mesh_app_hci_sleep(void)
-{
-    if (wiced_is_timer_in_use(&app_timer))
-        wiced_stop_timer(&app_timer);
 }
 
 wiced_result_t mesh_application_send_hci_event(uint16_t opcode, const uint8_t *p_data, uint16_t data_len)
@@ -553,6 +467,19 @@ uint16_t mesh_application_mcu_memory_write(uint16_t id, uint16_t data_len, const
     return data_len;
 }
 
+void command_complete_callback(wiced_bt_dev_vendor_specific_command_complete_params_t *p_command_complete_params)
+{
+    uint8_t buf[257];
+
+    WICED_BT_TRACE("HCI complete callback: opcode:%04x data_len:%d\n", p_command_complete_params->opcode, p_command_complete_params->param_len);
+
+    buf[0] = (uint8_t)p_command_complete_params->opcode;
+    buf[1] = (uint8_t)(p_command_complete_params->opcode >> 8);
+    buf[2] = p_command_complete_params->param_len;
+    memcpy(&buf[3], p_command_complete_params->p_param_buf, p_command_complete_params->param_len);
+    mesh_application_send_hci_event(HCI_CONTROL_TEST_EVENT_ENCAPSULATED_HCI_EVENT, buf, p_command_complete_params->param_len + 3);
+}
+
 wiced_result_t mesh_application_process_hci_cmd(uint16_t opcode, const uint8_t *p_data, uint16_t data_len)
 {
     wiced_result_t      ret = WICED_TRUE;
@@ -561,6 +488,16 @@ wiced_result_t mesh_application_process_hci_cmd(uint16_t opcode, const uint8_t *
 
     switch (opcode)
     {
+    case HCI_CONTROL_TEST_COMMAND_ENCAPSULATED_HCI_COMMAND:
+        if ((data_len < 3) || (data_len - 3 != p_data[2]))
+        {
+            WICED_BT_TRACE("hci_cmd: bad len %d\n", data_len);
+            break;
+        }
+        id = (uint16_t)p_data[0] | (((uint16_t)p_data[1]) << 8);
+        ret = wiced_bt_dev_vendor_specific_command(id, data_len - 3, (uint8_t *)&p_data[3], command_complete_callback);
+        break;
+
     case HCI_CONTROL_COMMAND_PUSH_NVRAM_DATA:
         // make sure it contains NVRAM ID and at least one byte of data
         if (data_len <= 2)
