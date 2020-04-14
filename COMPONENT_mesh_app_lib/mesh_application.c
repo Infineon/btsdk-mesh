@@ -282,7 +282,7 @@ void mesh_application_start()
     // setup NVRAM IDs which will be used by core and models
     mesh_setup_nvram_ids();
 
-    WICED_BT_TRACE("Mesh Start\n");
+    WICED_BT_TRACE("Mesh Start: %d.%d.%d.%d\n", WICED_SDK_MAJOR_VER, WICED_SDK_MINOR_VER, WICED_SDK_REV_NUMBER, WICED_SDK_BUILD_NUMBER);
 }
 
 #ifdef _DEB_DELAY_START_SEC
@@ -572,6 +572,10 @@ void mesh_application_init(void)
     }
     // Now start mesh picking up tx power set by app in wiced_bt_mesh_core_adv_tx_power
     wiced_bt_mesh_core_start();
+
+#ifdef MESH_DFU_SUPPORTED
+    mesh_app_dfu_init();
+#endif
 
     WICED_BT_TRACE("***** Free mem after app_init:%d\n", wiced_memory_get_free_bytes());
 }
@@ -1080,7 +1084,8 @@ void mesh_setup_nvram_ids()
     wiced_bt_mesh_core_nvm_idx_app_key_begin        = wiced_bt_mesh_core_nvm_idx_net_key_begin  - wiced_bt_mesh_core_app_key_max_num;
     wiced_bt_mesh_core_nvm_idx_health_state         = wiced_bt_mesh_core_nvm_idx_app_key_begin  - 1;
     wiced_bt_mesh_core_nvm_idx_cfg_data             = wiced_bt_mesh_core_nvm_idx_health_state   - ((cfg_data_len + (WICED_BT_MESH_CORE_NVRAM_CHUNK_MAX_SIZE - 1)) / WICED_BT_MESH_CORE_NVRAM_CHUNK_MAX_SIZE);
-    mesh_nvm_idx_seq                                = wiced_bt_mesh_core_nvm_idx_cfg_data       - 1;
+    wiced_bt_mesh_core_nvm_idx_fw_distributor       = wiced_bt_mesh_core_nvm_idx_cfg_data       - 1;
+    mesh_nvm_idx_seq                                = wiced_bt_mesh_core_nvm_idx_fw_distributor - 1;
 
     WICED_BT_TRACE("setup nvram ids: net_key_max_num:%d app_key_max_num:%d nvm_idx_seq:%x %x-%x cfg_data_len:%d\n", wiced_bt_mesh_core_net_key_max_num, wiced_bt_mesh_core_app_key_max_num, mesh_nvm_idx_seq, wiced_bt_mesh_core_nvm_idx_health_state, WICED_NVRAM_VSID_END, cfg_data_len);
     WICED_BT_TRACE(" node_data:%x net_key_begin:%x app_key_begin:%x\n", wiced_bt_mesh_core_nvm_idx_node_data, wiced_bt_mesh_core_nvm_idx_net_key_begin, wiced_bt_mesh_core_nvm_idx_app_key_begin);

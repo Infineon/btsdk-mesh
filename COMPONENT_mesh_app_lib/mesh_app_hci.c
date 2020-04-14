@@ -44,6 +44,7 @@
 #include "wiced_bt_mesh_app.h"
 #include "wiced_hal_wdog.h"
 #include "wiced_bt_mesh_app.h"
+#include "wiced_bt_mesh_models.h"
 #include "wiced_bt_mesh_core.h"
 #include "wiced_bt_trace.h"
 #include "mesh_application.h"
@@ -161,9 +162,14 @@ wiced_bt_mesh_hci_event_t *wiced_bt_mesh_alloc_hci_event(uint8_t element_idx)
     return p_hci_event;
 }
 
-void mesh_transport_send_data(uint16_t opcode, uint8_t *p_trans_buf, uint16_t data_len)
+wiced_result_t mesh_transport_send_data(uint16_t opcode, uint8_t *p_trans_buf, uint16_t data_len)
 {
-    wiced_transport_send_buffer(opcode, p_trans_buf, data_len);
+    wiced_result_t result = wiced_transport_send_buffer(opcode, p_trans_buf, data_len);
+    if (result != WICED_BT_SUCCESS)
+    {
+        WICED_BT_TRACE("transport send buffer:%d\n", result);
+    }
+    return result;
 }
 
 //  Pass protocol traces up through the UART
@@ -226,7 +232,22 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
             {
                 wiced_hal_wdog_reset_system();
             }
-            else if (wiced_bt_mesh_core_test_mode_signal(opcode, p_data, payload_len))
+            else if (!wiced_bt_mesh_core_test_mode_signal(opcode, p_data, payload_len))
+#else
+            if ((opcode == HCI_CONTROL_MESH_COMMAND_CORE_SET_SEQ) ||
+                (opcode == HCI_CONTROL_MESH_COMMAND_CORE_DEL_SEQ))
+            {
+                wiced_bt_mesh_core_proc_rx_cmd(opcode, p_data, payload_len);
+            }
+            else if (opcode == HCI_CONTROL_MESH_COMMAND_TRACE_CORE_SET)
+            {
+                wiced_bt_mesh_core_set_trace_level(p_data[1] + (p_data[2] << 8) + (p_data[3] << 16) + (p_data[4] << 24), p_data[0]);
+            }
+            else if (opcode == HCI_CONTROL_MESH_COMMAND_TRACE_MODELS_SET)
+            {
+                wiced_bt_mesh_models_set_trace_level(p_data[0]);
+            }
+            else
 #endif
             {
                 if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
@@ -273,19 +294,8 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
         STREAM_TO_UINT8(p_event->retrans_cnt, p);
         STREAM_TO_UINT8(p_event->retrans_time, p);
         STREAM_TO_UINT8(p_event->reply_timeout, p);
-        STREAM_TO_UINT16(p_event->num_in_group, p);
 
-        *len = *len - 8;
-
-        if (p_event->num_in_group != 0)
-        {
-            p_event->group_list = (uint16_t *)wiced_bt_get_buffer(sizeof(uint16_t) * p_event->num_in_group);
-            for (i = 0; i < p_event->num_in_group; i++)
-            {
-                STREAM_TO_UINT16(p_event->group_list[i], p);
-                *len -= 2;
-            }
-        }
+        *len = *len - 6;
     }
     *p_data = p;
     return p_event;
@@ -296,20 +306,9 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
  */
 void wiced_bt_mesh_skip_wiced_hci_hdr(uint8_t **p_data, uint32_t *len)
 {
-    uint16_t num_in_group;
-    uint8_t  *p = *p_data;
-
     // skip dst (2), app_key_idx(2), element_idx(1), reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
-    p += 11;
-    STREAM_TO_UINT16(num_in_group, p);
-    *len = *len - 13;
-
-    if (num_in_group != 0)
-    {
-        p -= (2 * num_in_group);
-        *len -= (2 * num_in_group);
-    }
-    *p_data = p;
+    *len = *len - 11;
+    *p_data = (*p_data + 11);
 }
 
 /*
@@ -318,21 +317,14 @@ void wiced_bt_mesh_skip_wiced_hci_hdr(uint8_t **p_data, uint32_t *len)
 uint8_t wiced_bt_mesh_get_element_idx_from_wiced_hci(uint8_t **p_data, uint32_t *len)
 {
     uint8_t  element_idx;
-    uint16_t num_in_group;
     int i;
     uint8_t  *p = *p_data;
     wiced_bt_mesh_event_t *p_event;
 
     p += 4;  // skip dst(2) and app_key_idx(2)
     STREAM_TO_UINT8(element_idx, p);
-
-    *len = *len - 5;
-
     p += 6;             // reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
-    STREAM_TO_UINT16(num_in_group, p);
-    *len = *len - 8;
-    *len = *len - (2 * num_in_group);
-    p    = p + (2 * num_in_group);
+    *len = *len - 11;
     *p_data = p;
     return element_idx;
 }
@@ -343,50 +335,10 @@ uint8_t wiced_bt_mesh_get_element_idx_from_wiced_hci(uint8_t **p_data, uint32_t 
 void wiced_bt_mesh_send_hci_tx_complete(wiced_bt_mesh_hci_event_t *p_hci_event, wiced_bt_mesh_event_t *p_event)
 {
     uint8_t *p = p_hci_event->data;
-    int i;
-    uint8_t num_addrs = 1;
-    uint16_t    ui16val;
-
-    if ((p_event->status.tx_flag) && (p_event->dst >= 0xC000))
-    {
-        num_addrs = 0;
-        for (i = 0; i < p_event->num_in_group; i++)
-        {
-            if (p_event->group_list[i] != 0)
-            {
-                num_addrs++;
-            }
-        }
-    }
 
     UINT16_TO_STREAM(p, p_event->hci_opcode);
     UINT8_TO_STREAM(p, p_event->status.tx_flag);
-
-    // if failed, put in all addresses from the Group that have not acked, otherwise just send out DST
-    if (p_event->status.tx_flag)
-    {
-        if (p_event->dst < 0xC000)
-        {
-            UINT16_TO_STREAM(p, 1);
-            UINT16_TO_STREAM(p, p_event->dst);
-        }
-        else
-        {
-            ui16val = num_addrs;
-            UINT16_TO_STREAM(p, ui16val);
-            for (i = 0; i < p_event->num_in_group; i++)
-            {
-                if (p_event->group_list[i] != 0)
-                {
-                    UINT16_TO_STREAM(p, p_event->group_list[i]);
-                }
-            }
-        }
-    }
-    else
-    {
-        UINT16_TO_STREAM(p, p_event->dst);
-    }
+    UINT16_TO_STREAM(p, p_event->dst);
     mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_TX_COMPLETE, (uint8_t *)p_hci_event, (uint16_t)(p - (uint8_t *)p_hci_event));
 }
 

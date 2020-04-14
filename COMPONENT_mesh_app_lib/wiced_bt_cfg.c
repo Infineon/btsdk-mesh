@@ -167,7 +167,7 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .roles                          = 0,                                                         // Mask of local roles supported (AVRC_CONN_INITIATOR|AVRC_CONN_ACCEPTOR)
         .max_links                      = 0                                                          // Maximum simultaneous remote control links
     },
-    .addr_resolution_db_size            = 5,                                                         // LE Address Resolution DB settings - effective only for pre 4.2 controller
+    .addr_resolution_db_size            = 0,                                                         // LE Address Resolution DB settings - effective only for pre 4.2 controller
 #if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20819A1) || defined(CYW20820A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
     .max_number_of_buffer_pools         = 4,                                                         // Maximum number of buffer pools in p_btm_cfg_buf_pools and by wiced_create_pool
     .rpa_refresh_timeout                = 0,                                                         // Interval of  random address refreshing - secs

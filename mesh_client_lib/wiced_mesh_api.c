@@ -27,7 +27,7 @@
 extern uint8_t wiced_hci_send(uint16_t opcode, uint8_t *p_buffer, uint16_t length);
 extern void Log(char *fmt, ...);
 uint8_t *wiced_bt_mesh_hci_header_from_event(wiced_bt_mesh_event_t *p_event, uint8_t *p_buffer, uint16_t len);
-uint8_t *wiced_bt_mesh_format_hci_header(uint16_t dst, uint16_t app_key_idx, uint8_t element_idx, uint8_t reliable, uint8_t send_segmented, uint8_t ttl, uint8_t retransmit_count, uint8_t retransmit_interval, uint8_t reply_timeout, uint16_t num_in_group, uint16_t *group_list, uint8_t *p_buffer, uint16_t len);
+uint8_t *wiced_bt_mesh_format_hci_header(uint16_t dst, uint16_t app_key_idx, uint8_t element_idx, uint8_t reliable, uint8_t send_segmented, uint8_t ttl, uint8_t retransmit_count, uint8_t retransmit_interval, uint8_t reply_timeout, uint8_t *p_buffer, uint16_t len);
 wiced_bt_mesh_event_t *wiced_bt_mesh_event_from_hci_header(uint8_t **p_buffer, uint16_t *len);
 void wiced_bt_free_buffer(void *buf);
 void *wiced_bt_get_buffer(uint16_t size);
@@ -412,27 +412,23 @@ void process_provision_oob_data(uint8_t *p_buffer, uint16_t len)
 
 void process_tx_complete(uint8_t *p_buffer, uint16_t len)
 {
-    int i;
+    uint16_t addr;
+    uint16_t hci_opcode;
+    uint8_t  tx_status;
+
     wiced_bt_mesh_event_t *p_event = wiced_bt_mesh_event_from_hci_header(&p_buffer, &len);
     if (p_event == NULL)
         return;
-    uint16_t num_addr;
-    uint16_t addr;
-    uint16_t hci_opcode = p_buffer[0] + ((uint32_t)p_buffer[1] << 8);
-    uint8_t  tx_status = p_buffer[2];
+
+    hci_opcode = p_buffer[0] + (p_buffer[1] << 8);
+    tx_status = p_buffer[2];
+    addr = p_buffer[3] + (p_buffer[4] << 8);
     if (tx_status == TX_STATUS_FAILED)
     {
-        num_addr = p_buffer[3] + ((uint32_t)p_buffer[4] << 8);
-        for (i = 0; i < num_addr; i++)
-        {
-            addr = p_buffer[5 + (2 * i)] + ((uint32_t)p_buffer[6 + (2 * i)] << 8);
-            Log("Node unreachable: opcode:%x addr:%x", hci_opcode, addr);
-        }
-        //  ToDo notify parent  mesh_provision_process_event(WICED_BT_MESH_CONFIG_APPKEY_STATUS, p_event, &data);
+        Log("Node unreachable: opcode:%x addr:%x", hci_opcode, addr);
     }
     else
     {
-        addr = p_buffer[3] + ((uint32_t)p_buffer[4] << 8);
         // Log("Mesh Tx Complete: opcode:%x addr:%x", hci_opcode, addr);
     }
     wiced_bt_mesh_release_event(p_event);
@@ -1039,6 +1035,14 @@ void wiced_bt_mesh_provision_set_dev_key(wiced_bt_mesh_set_dev_key_data_t *p_dat
     wiced_hci_send(HCI_CONTROL_MESH_COMMAND_SET_DEVICE_KEY, buffer, (uint16_t)(p - buffer));
 }
 
+void wiced_bt_mesh_adv_tx_power_set(uint8_t adv_tx_power)
+{
+    uint8_t buffer[260] = {0};
+    uint8_t *p = buffer;
+    p[0] = adv_tx_power;
+    wiced_hci_send(HCI_CONTROL_MESH_COMMAND_SET_ADV_TX_POWER, buffer, 1);
+}
+
 void wiced_bt_mesh_add_vendor_model(wiced_bt_mesh_add_vendor_model_data_t *p_data)
 {
     uint8_t buffer[260] = {0};
@@ -1233,7 +1237,7 @@ wiced_bool_t wiced_bt_mesh_config_model_publication_set(wiced_bt_mesh_event_t *p
 
 wiced_bool_t wiced_bt_mesh_config_model_subscription_change(wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_config_model_subscription_change_data_t *p_data)
 {
-    uint16_t hci_opcode;
+    uint16_t hci_opcode = 0;
     uint8_t buffer[128];
     uint8_t *p = wiced_bt_mesh_hci_header_from_event(p_event, buffer, sizeof(buffer));
 
@@ -2974,12 +2978,11 @@ wiced_bool_t wiced_bt_mesh_core_del_seq(uint16_t addr)
     return 1;
 }
 
-uint8_t *wiced_bt_mesh_format_hci_header(uint16_t dst, uint16_t app_key_idx, uint8_t element_idx, uint8_t reliable, uint8_t send_segmented, uint8_t ttl, uint8_t retransmit_count, uint8_t retransmit_interval, uint8_t reply_timeout, uint16_t num_in_group, uint16_t *group_list, uint8_t *p_buffer, uint16_t len)
+uint8_t *wiced_bt_mesh_format_hci_header(uint16_t dst, uint16_t app_key_idx, uint8_t element_idx, uint8_t reliable, uint8_t send_segmented, uint8_t ttl, uint8_t retransmit_count, uint8_t retransmit_interval, uint8_t reply_timeout, uint8_t *p_buffer, uint16_t len)
 {
     uint8_t *p = p_buffer;
-    int i;
 
-    if (len < 13 + (2 * num_in_group))
+    if (len < 11)
         return NULL;
 
     *p++ = dst & 0xff;
@@ -2993,19 +2996,12 @@ uint8_t *wiced_bt_mesh_format_hci_header(uint16_t dst, uint16_t app_key_idx, uin
     *p++ = retransmit_count;
     *p++ = retransmit_interval;
     *p++ = reply_timeout;
-    *p++ = num_in_group & 0xff;
-    *p++ = (num_in_group >> 8) & 0xff;
-    for (i = 0; i < num_in_group; i++)
-    {
-        *p++ = group_list[i] & 0xff;
-        *p++ = (group_list[i] >> 8) & 0xff;
-    }
     return p;
 }
 
 uint8_t *wiced_bt_mesh_hci_header_from_event(wiced_bt_mesh_event_t *p_event, uint8_t *p_buffer, uint16_t len)
 {
-    return wiced_bt_mesh_format_hci_header(p_event->dst, p_event->app_key_idx, p_event->element_idx, p_event->reply, p_event->send_segmented, p_event->ttl, p_event->retrans_cnt, p_event->retrans_time, p_event->reply_timeout, p_event->num_in_group, p_event->group_list, p_buffer, len);
+    return wiced_bt_mesh_format_hci_header(p_event->dst, p_event->app_key_idx, p_event->element_idx, p_event->reply, p_event->send_segmented, p_event->ttl, p_event->retrans_cnt, p_event->retrans_time, p_event->reply_timeout, p_buffer, len);
 }
 
 wiced_bt_mesh_event_t *wiced_bt_mesh_event_from_hci_header(uint8_t **p_buffer, uint16_t *len)
@@ -3090,8 +3086,6 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event(uint8_t element_idx, uint16_t 
 */
 void wiced_bt_mesh_release_event(wiced_bt_mesh_event_t *p_event)
 {
-    if (p_event->group_list != NULL)
-        wiced_bt_free_buffer(p_event->group_list);
     wiced_bt_free_buffer(p_event);
 }
 
