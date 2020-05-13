@@ -330,6 +330,11 @@ typedef void(*mesh_client_get_oob_data_t)(uint8_t *uuid, uint16_t oob, uint8_t *
 uint8_t mesh_client_provision(const char *device_name, const char *group_name, uint8_t *uuid, uint8_t identify_duration);
 
 /*
+ * Start provisioning of the device with specified UUID using Static OOB Data.
+ */
+uint8_t mesh_client_provision_with_oob(const char* device_name, const char* group_name, uint8_t* uuid, uint8_t identify_duration, uint8_t *p_oob_data, uint8_t oob_data_len);
+
+/*
  * Perform factory reset of the device. This function can be used to delete a device from the current network.
  * In addition to resetting the device, the mesh client library performs the key refresh procedure.  The new
  * keys will be distributed to all other nodes, but not to the node being reset.  Even if the node misbehaves,
@@ -506,7 +511,7 @@ typedef void(*mesh_client_sensor_status_t)(const char *device_name, int property
 /*
 * Sensor state callback is executed as a result of the Get/Set operation or when state of the sensor is changed locally
 */
-typedef void(*mesh_client_vendor_specific_data_t)(const char *device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, uint8_t *p_data, uint16_t data_len);
+typedef void(*mesh_client_vendor_specific_data_t)(const char *device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, uint8_t ttl, uint8_t *p_data, uint16_t data_len);
 
 /*
  * Get current state of HSL light
@@ -541,7 +546,7 @@ int mesh_client_add_vendor_model(uint16_t company_id, uint16_t model_id, uint8_t
 /*
  * Send vendor specific data
  */
-int mesh_client_vendor_data_set(const char *device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, uint8_t *buffer, uint16_t len);
+int mesh_client_vendor_data_set(const char* device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, wiced_bool_t disable_ntwk_retransmit, uint8_t* buffer, uint16_t data_len);
 
 /*
  * Return a concatenated list of groups to which the component belongs

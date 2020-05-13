@@ -143,6 +143,10 @@ wiced_bt_mesh_hci_event_t *wiced_bt_mesh_create_hci_event(wiced_bt_mesh_event_t 
         p_hci_event->company_id  = p_event->company_id;
         p_hci_event->opcode      = p_event->opcode;
     }
+    else
+    {
+        memset(p_hci_event, 0, sizeof(wiced_bt_mesh_hci_event_t));
+    }
     return p_hci_event;
 }
 

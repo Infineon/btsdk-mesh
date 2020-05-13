@@ -118,7 +118,7 @@ void wiced_bt_mesh_app_provision_server_configure(wiced_bt_mesh_provision_capabi
 
 
 /*
- * This callback is executed by the core library on successfull start of provisioning.
+ * This callback is executed by the core library on successful start of provisioning.
  */
 void mesh_app_provision_started(uint32_t conn_id)
 {
@@ -172,9 +172,9 @@ wiced_bool_t mesh_app_provision_get_oob(uint32_t conn_id, uint8_t type, uint8_t 
 /*
 * Application can call this function with oob provisioning data.
 */
-wiced_bool_t wiced_bt_mesh_provision_set_oob(wiced_bt_mesh_provision_oob_value_data_t *p_oob)
+wiced_bool_t wiced_bt_mesh_provision_set_oob(uint8_t* p_oob, uint8_t len)
 {
-    return wiced_bt_mesh_core_provision_set_oob(p_oob->data, p_oob->data_size);
+    return wiced_bt_mesh_core_provision_set_oob(p_oob, len);
 }
 
 

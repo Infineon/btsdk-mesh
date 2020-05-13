@@ -197,6 +197,12 @@ static wiced_bool_t             mesh_application_seq_save(wiced_bt_mesh_core_sta
 static wiced_bool_t             mesh_application_seq_init(void);
 static wiced_bool_t             mesh_application_rpl_clr(void);
 
+#define STATIC_OOB_DATA
+#ifdef STATIC_OOB_DATA
+static void mesh_app_process_oob_get(wiced_bt_mesh_provision_device_oob_request_data_t *p_data);
+static void mesh_app_provision_message_handler(uint16_t event, void *p_data);
+#endif
+
 #ifdef MESH_HOMEKIT_COMBO_APP
 extern void mesh_provisioning_state_changed(wiced_bool_t provisioned);
 extern void homekit_factory_reset();
@@ -206,17 +212,33 @@ extern wiced_bt_cfg_settings_t wiced_bt_cfg_settings;
 extern const wiced_bt_cfg_buf_pool_t wiced_bt_cfg_buf_pools[];
 extern uint16_t wiced_bt_mesh_core_lpn_get_friend_addr(void);
 extern void wiced_bt_mesh_core_shutdown(void);
-#ifdef CYW20706A2
-extern void rtc_init();
-#endif
 // NVM index for SEQ
 uint16_t mesh_nvm_idx_seq;
 
 /******************************************************
  *          Variables Definitions
  ******************************************************/
+#ifdef STATIC_OOB_DATA
+// In real product, Static OOB Data should be written in static section flash during manufacturing
+uint8_t static_oob_data[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
+uint8_t static_oob_data_len = 16;
+#endif
+
+#define STATIC_UUID
+#ifdef STATIC_UUID
+// In real product, Static OOB Data should be written in static section flash during manufacturing
+uint8_t static_uuid[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
+#endif
+
+#ifdef PTS
+#define STATIC_OOB_PUB_KEY
+#endif
+#ifdef STATIC_OOB_PUB_KEY
 // Use hardcoded PTS default priv key. In real app it will be generated once and written into OTP memory
 uint8_t pb_priv_key[WICED_BT_MESH_PROVISION_PRIV_KEY_LEN] = { 0x52, 0x9A, 0xA0, 0x67, 0x0D, 0x72, 0xCD, 0x64, 0x97, 0x50, 0x2E, 0xD4, 0x73, 0x50, 0x2B, 0x03, 0x7E, 0x88, 0x03, 0xB5, 0xC6, 0x08, 0x29, 0xA5, 0xA3, 0xCA, 0xA2, 0x19, 0x50, 0x55, 0x30, 0xBA };
+#else
+uint8_t *pb_priv_key = NULL;
+#endif
 
 //WICED_TRUE is we are provisioner
 wiced_bool_t mesh_config_client = WICED_FALSE;
@@ -340,7 +362,7 @@ wiced_result_t mesh_management_cback(wiced_bt_management_evt_t event, wiced_bt_m
         if (*p_mode == BTM_BLE_ADVERT_OFF)
         {
             WICED_BT_TRACE("adv stopped\n");
-            // On failed attempt to connect FW stops all connectable adverts. 20719B1 also receives that event in case of successfull connection
+            // On failed attempt to connect FW stops all connectable adverts. 20719B1 also receives that event in case of successful connection
             // If we disconnected then notify core to restart them
             if (!mesh_app_gatt_is_connected())
             {
@@ -564,7 +586,29 @@ void mesh_application_init(void)
     }
 #endif
 
+#ifdef STATIC_OOB_DATA
+    {
+        wiced_bt_mesh_provision_capabilities_data_t provision_caps;
+
+        // This application support Static OOB Data. Register event handler with mesh_app library.
+        wiced_bt_mesh_app_provision_server_init(pb_priv_key, mesh_app_provision_message_handler);
+
+        provision_caps.pub_key_type      = 0;
+        provision_caps.static_oob_type   = 1;
+        provision_caps.output_oob_action = 0;
+        provision_caps.output_oob_size   = 0;
+        provision_caps.input_oob_action  = 0;
+        provision_caps.input_oob_size    = 0;
+
+        wiced_bt_mesh_app_provision_server_configure(&provision_caps);
+
+        // In case application forgot to fill conifg.oob.
+        if (mesh_config.oob == 0)
+            mesh_config.oob = (WICED_BT_MESH_CORE_OOB_BIT_OTHER | WICED_BT_MESH_CORE_OOB_BIT_NUMBER);
+    }
+#else
     wiced_bt_mesh_app_provision_server_init(pb_priv_key, NULL);
+#endif
 
     if (wiced_bt_mesh_app_func_table.p_mesh_app_init)
     {
@@ -907,15 +951,6 @@ void mesh_start_stop_scan_callback(wiced_bool_t start, wiced_bool_t is_scan_acti
     wiced_bt_ble_observe(start, 0, mesh_adv_report);
 }
 
-#ifdef CYW20706A2
-// Core initialization initializes the RTC calling wiced_bt_mesh_core_rtc_init() defined in app. It just should call rtc_init().
-// For that chip rtc_init should be called from application. Otherwise there is build error at link phase
-void wiced_bt_mesh_core_rtc_init(void)
-{
-    rtc_init();
-}
-#endif
-
 // Functions for testing the delay between poll and responce (friend update)
 void low_power_poll_rsp_time_clear(void);
 void low_power_poll_rsp_time_get_stats(
@@ -1058,6 +1093,45 @@ uint8_t number_of_elements_with_model(uint16_t model_id)
     return (num_elements_with_model);
 }
 
+#ifdef STATIC_OOB_DATA
+/*
+ * Process event received from the OnOff Client.
+ */
+void mesh_app_provision_message_handler(uint16_t event, void *p_data)
+{
+    switch (event)
+    {
+    case WICED_BT_MESH_PROVISION_STARTED:
+        WICED_BT_TRACE("provision started\n");
+        break;
+
+    case WICED_BT_MESH_PROVISION_END:
+        WICED_BT_TRACE("provision end addr:%04x result:%d\n", ((wiced_bt_mesh_provision_status_data_t *)p_data)->addr, ((wiced_bt_mesh_provision_status_data_t *)p_data)->result);
+        break;
+
+    case WICED_BT_MESH_PROVISION_GET_OOB_DATA:
+        mesh_app_process_oob_get((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data);
+        break;
+
+    default:
+        WICED_BT_TRACE("unknown\n");
+    }
+}
+
+/*
+ * This application supports Static OOB Data. This is the only type of request we should have received.
+ */
+void mesh_app_process_oob_get(wiced_bt_mesh_provision_device_oob_request_data_t *p_data)
+{
+    if (p_data->type != WICED_BT_MESH_PROVISION_GET_OOB_TYPE_GET_STATIC)
+    {
+        WICED_BT_TRACE("invalid OOB type:%d\n", p_data->type);
+        return;
+    }
+    WICED_BT_TRACE("Get OOB static data len:%d\n", static_oob_data_len);
+    wiced_bt_mesh_provision_set_oob(static_oob_data, static_oob_data_len);
+}
+#endif
 void mesh_setup_nvram_ids()
 {
     // Allocate one additional NVRAM ID for configuration data in case it will increased on FW upgrade

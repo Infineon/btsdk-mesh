@@ -300,6 +300,8 @@ typedef struct
     uint8_t     dev_key[16];        // local device key
     unprovisioned_report_t *p_first_unprovisioned;// address of the first unprovisioned report
     uint8_t     uuid[16];           // device being provisioned
+    uint8_t     oob_data[16];       // Static OOB data to be used during provisioning
+    uint8_t     oob_data_len;       // Length of Static OOB Data, or 0 if provisioning with no static OOB data
     uint32_t    provision_conn_id;  // connection id used during provisioning
     uint32_t    proxy_conn_id;      // connection id of the connection to proxy
     uint8_t     provision_completed_sent;   // Set to false when starting procedure, true when failed/success sent to the client
@@ -411,6 +413,8 @@ static void mesh_provision_disconnecting_link_status(mesh_provision_cb_t *p_cb, 
 static void mesh_node_connecting_link_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_connect_status_data_t *p_data);
 static void mesh_provision_process_device_caps(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_device_capabilities_data_t *p_data);
 static void mesh_provision_process_provision_end(mesh_provision_cb_t *p_cb, wiced_bt_mesh_provision_status_data_t *p_data);
+static void mesh_provision_process_get_oob_data(mesh_provision_cb_t* p_cb, wiced_bt_mesh_event_t* p_event, wiced_bt_mesh_provision_device_oob_request_data_t* p_data);
+
 void mesh_configure_set_local_device_key(uint16_t addr);
 static void mesh_configure_proxy_connection_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_connect_status_data_t *p_data);
 static void mesh_configure_disconnecting_link_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_connect_status_data_t *p_data);
@@ -3082,7 +3086,7 @@ uint8_t mesh_client_dev_key_refresh(uint8_t *uuid)
     return MESH_CLIENT_SUCCESS;
 }
 
-uint8_t mesh_client_provision(const char* device_name, const char* group_name, uint8_t* uuid, uint8_t identify_duration)
+uint8_t mesh_client_provision_start(const char* device_name, const char* group_name, uint8_t* uuid, uint8_t identify_duration)
 {
     uint8_t db_changed = WICED_FALSE;
     int i = 0;
@@ -3165,6 +3169,26 @@ uint8_t mesh_client_provision(const char* device_name, const char* group_name, u
         provision_status_notify(p_cb, MESH_CLIENT_PROVISION_STATUS_CONNECTING);
     }
     return MESH_CLIENT_SUCCESS;
+}
+
+uint8_t mesh_client_provision_with_oob(const char* device_name, const char* group_name, uint8_t* uuid, uint8_t identify_duration, uint8_t* p_oob_data, uint8_t oob_data_len)
+{
+    mesh_provision_cb_t* p_cb = &provision_cb;
+
+    if ((oob_data_len == 0) || (oob_data_len > sizeof(p_cb->oob_data)))
+        return MESH_CLIENT_ERR_INVALID_ARGS;
+
+    p_cb->oob_data_len = oob_data_len;
+    memcpy(p_cb->oob_data, p_oob_data, oob_data_len);
+    return mesh_client_provision_start(device_name, group_name, uuid, identify_duration);
+}
+
+uint8_t mesh_client_provision(const char* device_name, const char* group_name, uint8_t* uuid, uint8_t identify_duration)
+{
+    mesh_provision_cb_t* p_cb = &provision_cb;
+
+    p_cb->oob_data_len = 0;
+    return mesh_client_provision_start(device_name, group_name, uuid, identify_duration);
 }
 
 uint8_t mesh_client_connect_proxy(mesh_provision_cb_t *p_cb, uint8_t connect_type, uint8_t scan_duration)
@@ -3334,7 +3358,7 @@ void mesh_sensor_process_event(uint16_t addr, uint16_t event, void *p_data)
     }
 }
 
-void mesh_vendor_specific_data(uint16_t src, uint16_t company_id, uint16_t model_id, uint8_t opcode, void *p_data, uint16_t data_len)
+void mesh_vendor_specific_data(uint16_t src, uint16_t company_id, uint16_t model_id, uint8_t opcode, uint8_t ttl, void* p_data, uint16_t data_len)
 {
     mesh_provision_cb_t *p_cb = &provision_cb;
 
@@ -3342,7 +3366,7 @@ void mesh_vendor_specific_data(uint16_t src, uint16_t company_id, uint16_t model
         return;
 
     const char *p_name = get_component_name(src);
-    p_cb->p_vendor_specific_data(p_name, company_id, model_id, opcode, p_data, data_len);
+    p_cb->p_vendor_specific_data(p_name, company_id, model_id, opcode, ttl, p_data, data_len);
 }
 
 void mesh_provision_process_event(uint16_t event, wiced_bt_mesh_event_t *p_event, void *p_data)
@@ -3480,7 +3504,7 @@ void mesh_provision_process_event(uint16_t event, wiced_bt_mesh_event_t *p_event
         return;
 
     case WICED_BT_MESH_VENDOR_DATA:
-        mesh_vendor_specific_data(p_event->src, p_event->company_id, p_event->model_id, (uint8_t)p_event->opcode, p_data, p_event->data_len);
+        mesh_vendor_specific_data(p_event->src, p_event->company_id, p_event->model_id, (uint8_t)p_event->opcode, (uint8_t)p_event->ttl, p_data, p_event->data_len);
         wiced_bt_mesh_release_event(p_event);
         return;
     }
@@ -3730,16 +3754,12 @@ void mesh_provision_state_provisioning(mesh_provision_cb_t *p_cb, uint16_t event
         break;
 
     case WICED_BT_MESH_PROVISION_GET_OOB_DATA:
-        sprintf(buf, "Provision: get OOB from Server:%x type:%d size:%d action:%d",
+        Log("Provision: get OOB from Server:%x type:%d size:%d action:%d",
             ((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data)->provisioner_addr,
             ((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data)->type,
             ((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data)->size,
             ((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data)->action);
-        for (i = 0; i < 16; i++)
-        {
-            sprintf(&buf[strlen(buf)], "%02x ", ((wiced_bt_mesh_provision_status_data_t *)p_data)->dev_key[i]);
-        }
-        Log(buf);
+        mesh_provision_process_get_oob_data(p_cb, p_event, (wiced_bt_mesh_provision_device_oob_request_data_t*)p_data);
  //       provision_status_notify(p_cb, MESH_CLiENT_PROVISION_STATUS_GET_OOB);
         break;
 
@@ -4176,6 +4196,8 @@ void mesh_configure_state_key_refresh1(mesh_provision_cb_t *p_cb, uint16_t event
         break;
 
     case WICED_BT_MESH_PROXY_FILTER_STATUS:
+        if (p_cb->p_first->operation == CONFIG_OPERATION_FILTER_ADD)
+            start_next_op(p_cb);
         configure_execute_pending_operation(p_cb);
         break;
 
@@ -4236,6 +4258,8 @@ void mesh_configure_state_key_refresh2(mesh_provision_cb_t *p_cb, uint16_t event
         break;
 
     case WICED_BT_MESH_PROXY_FILTER_STATUS:
+        if (p_cb->p_first->operation == CONFIG_OPERATION_FILTER_ADD)
+            start_next_op(p_cb);
         configure_execute_pending_operation(p_cb);
         break;
 
@@ -4292,6 +4316,8 @@ void mesh_configure_state_key_refresh3(mesh_provision_cb_t *p_cb, uint16_t event
         break;
 
     case WICED_BT_MESH_PROXY_FILTER_STATUS:
+        if (p_cb->p_first->operation == CONFIG_OPERATION_FILTER_ADD)
+            start_next_op(p_cb);
         configure_execute_pending_operation(p_cb);
         break;
 
@@ -4365,7 +4391,7 @@ void mesh_provision_process_device_caps(mesh_provision_cb_t *p_cb, wiced_bt_mesh
     start.net_key_idx = 0;      //ToDo: select somehow desired netkey. For now use primary net key (0)
     start.algorithm = 0;
     start.public_key_type = p_data->pub_key_type;    // use value passed in the capabilities
-    start.auth_method = 0;
+    start.auth_method = ((p_cb->oob_data_len == 0) || (p_data->static_oob_type == 0)) ? 0 : WICED_BT_MESH_PROVISION_START_AUTH_METHOD_STATIC;
     start.auth_action = 0;
     start.auth_size = 0;
 
@@ -4471,6 +4497,20 @@ void mesh_provision_process_provision_end(mesh_provision_cb_t *p_cb, wiced_bt_me
             mesh_configure_set_local_device_key(p_cb->addr);
             mesh_configure_composition_data_get(p_cb, OPERATION_REMOTE);
         }
+    }
+}
+
+void mesh_provision_process_get_oob_data(mesh_provision_cb_t* p_cb, wiced_bt_mesh_event_t* p_event, wiced_bt_mesh_provision_device_oob_request_data_t* p_data)
+{
+    if ((p_cb->oob_data_len == 0) || (p_data->type != WICED_BT_MESH_PROVISION_GET_OOB_TYPE_ENTER_STATIC))
+    {
+        Log("OOB type not supported\n", p_data->type);
+        return;
+    }
+    p_event = mesh_configure_create_event(p_data->provisioner_addr, (p_data->provisioner_addr != p_cb->unicast_addr));
+    if (p_event != NULL)
+    {
+        wiced_bt_mesh_provision_client_set_oob(p_event, p_cb->oob_data, p_cb->oob_data_len);
     }
 }
 
@@ -4831,6 +4871,9 @@ void mesh_configure_net_key_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_even
 
 void mesh_configure_app_key_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_config_appkey_status_data_t *p_data)
 {
+    wiced_bt_mesh_db_node_t* p_node;
+    int i;
+
     // Check that this is not reply to a retransmission
     pending_operation_t *p_op = p_cb->p_first;
     if ((p_op == NULL) || (p_op->p_event == NULL) || (p_op->p_event->dst != p_event->src) ||
@@ -4845,9 +4888,17 @@ void mesh_configure_app_key_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_even
     Log("AppKey Status from:0x%04x status:%d NetKey Index:%x ApptKey Index:%x", p_event->src,
         p_data->status, p_data->net_key_idx, p_data->app_key_idx);
 
-    if (p_data->status != 0)
+    // If operation failed, this device likely not support several app keys as required by this mesh client.
+    // Reset device.
+    if ((p_data->status != 0) && (p_cb->addr == p_event->src) && ((p_node = mesh_find_node(p_mesh_db, p_event->src)) != NULL))
     {
-        // ToDo ??
+        p_cb->state = PROVISION_STATE_IDLE;
+        for (i = 0; i < p_node->num_elements; i++)
+            clean_pending_op_queue(p_node->unicast_address + i);
+
+        // Notify client that provision failed. This will reset the node.
+        provision_status_notify(p_cb, MESH_CLIENT_PROVISION_STATUS_FAILED);
+        return;
     }
     if ((p_data->status == 0) && p_cb->store_config)
     {
@@ -5308,9 +5359,16 @@ void mesh_configure_model_app_bind_status(mesh_provision_cb_t *p_cb, wiced_bt_me
     Log("Model App Bind Status from:%x status:%d Element addr:%04x Model ID:%x ApptKey Index:%x", p_event->src,
         p_data->status, p_data->element_addr, p_data->model_id, p_data->app_key_idx);
 
-    if (p_data->status != 0)
+    // If operation failed during initial configuration, bad device, reset.
+    if ((p_data->status != 0) && (p_cb->state == PROVISION_STATE_CONFIGURATION))
     {
-        // ToDo ??
+        wiced_bt_mesh_db_node_t* p_node;
+
+        p_cb->state = PROVISION_STATE_IDLE;
+        clean_pending_op_queue(p_event->src);
+        if ((p_node = mesh_find_node(p_mesh_db, p_event->src)) != NULL)
+            mesh_reset_node(p_cb, p_node);
+        return;
     }
     if (p_cb->store_config)
     {
@@ -5888,7 +5946,7 @@ int mesh_client_key_refresh_phase1_continue(mesh_provision_cb_t *p_cb, wiced_bt_
     pending_operation_t *p_op;
     uint8_t num_operations_scheduled = 0;
 
-    Log("KR phase1 continute key phase:%d\n", net_key->phase);
+    Log("KR phase1 continue key phase:%d\n", net_key->phase);
 
     // For every node in the network, check if the same key is present.  If true, schedule the update.
     for (node_idx = 0; node_idx < p_mesh_db->num_nodes; node_idx++)
@@ -6444,12 +6502,8 @@ void configure_queue_remote_device_operations(mesh_provision_cb_t *p_cb)
                     app_key = wiced_bt_mesh_db_app_key_get_by_name(p_mesh_db, "Generic");
                     app_key_add(p_cb, p_cb->addr, net_key, app_key);
                 }
-
-                if ((p_op = (pending_operation_t *)wiced_bt_get_buffer(sizeof(pending_operation_t))) != NULL)
-                {
-                    app_key = wiced_bt_mesh_db_app_key_get_by_name(p_mesh_db, "Generic");
-                    model_app_bind(p_cb, WICED_FALSE, p_cb->addr + element_idx, MESH_COMPANY_ID_BT_SIG, model_id, app_key->index);
-                }
+                app_key = wiced_bt_mesh_db_app_key_get_by_name(p_mesh_db, "Generic");
+                model_app_bind(p_cb, WICED_FALSE, p_cb->addr + element_idx, MESH_COMPANY_ID_BT_SIG, model_id, app_key->index);
             }
             if ((p_model_elem = model_needs_default_sub(MESH_COMPANY_ID_BT_SIG, model_id)) != NULL)
             {
@@ -8759,7 +8813,7 @@ int mesh_client_add_vendor_model(uint16_t company_id, uint16_t model_id, uint8_t
 }
 
 
-int mesh_client_vendor_data_set(const char *device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, uint8_t *buffer, uint16_t data_len)
+int mesh_client_vendor_data_set(const char *device_name, uint16_t company_id, uint16_t model_id, uint8_t opcode, wiced_bool_t disable_ntwk_retransmit, uint8_t *buffer, uint16_t data_len)
 {
     int i;
     uint16_t dst = get_device_addr(device_name);
@@ -8823,6 +8877,10 @@ int mesh_client_vendor_data_set(const char *device_name, uint16_t company_id, ui
         return MESH_CLIENT_ERR_NO_MEMORY;
     }
     p_event->opcode = opcode;
+
+    // Flag 0x80 means that the there will be no network retransmissions.
+    if(disable_ntwk_retransmit)
+        p_event->retrans_cnt = 0x80;
 
     Log("Send VS Data addr:%04x app_key_idx:%04x company_id:%04x model_id:%04x opcode:%02x data_len:%d",
         p_event->dst, p_event->app_key_idx, company_id, model_id, opcode, data_len);

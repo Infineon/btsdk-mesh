@@ -939,7 +939,7 @@ wiced_bool_t wiced_bt_mesh_provision_start(wiced_bt_mesh_event_t *p_event, wiced
     return wiced_hci_send(HCI_CONTROL_MESH_COMMAND_PROVISION_START, buffer, (uint16_t)(p - buffer));
 }
 
-wiced_bool_t wiced_bt_mesh_provision_client_set_oob(wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_oob_value_data_t *p_data)
+wiced_bool_t wiced_bt_mesh_provision_client_set_oob(wiced_bt_mesh_event_t *p_event, uint8_t* p_oob, uint32_t len)
 {
     uint8_t buffer[128];
     uint8_t *p = wiced_bt_mesh_hci_header_from_event(p_event, buffer, sizeof(buffer));
@@ -947,9 +947,8 @@ wiced_bool_t wiced_bt_mesh_provision_client_set_oob(wiced_bt_mesh_event_t *p_eve
     if (p == NULL)
         return WICED_FALSE;
 
-    *p++ = (uint8_t)p_data->data_size;
-    memcpy(p, p_data->data, p_data->data_size);
-    p += p_data->data_size;
+    memcpy(p, p_oob, len);
+    p += len;
 
     return wiced_hci_send(HCI_CONTROL_MESH_COMMAND_PROVISION_OOB_VALUE, buffer, (uint16_t)(p - buffer));
 }
