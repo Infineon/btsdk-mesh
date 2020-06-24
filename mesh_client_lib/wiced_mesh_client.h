@@ -1,5 +1,5 @@
 /*
-* Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
+* Copyright 2016-2020, Cypress Semiconductor Corporation or a subsidiary of
 * Cypress Semiconductor Corporation. All Rights Reserved.
 *
 * This software, including source code, documentation and related
@@ -417,35 +417,6 @@ uint16_t mesh_client_ota_data_decrypt(const char *component_name, const uint8_t 
  * The function can be called to read CID/PID/VID and FW version information of the device.
  */
 uint8_t mesh_client_get_component_info(char *component_name, mesh_client_component_info_status_t p_component_info_status_callback);
-
-/*
- * The function can be called to start DFU process
- */
-#define DFU_METHOD_PROXY_TO_ALL                     0
-#define DFU_METHOD_APP_TO_ALL                       1
-#define DFU_METHOD_APP_TO_DEVICE                    2
-
-int mesh_client_dfu_start(uint8_t *fw_id, uint8_t fw_id_len, uint8_t *meta_data, uint8_t meta_data_len, wiced_bool_t auto_apply, wiced_bool_t self_distributor);
-
-/*
- * The function can be called to stop DFU process
- */
-int mesh_client_dfu_stop(void);
-
-/*
- * Report OTA event to DFU (when OTA is used for image upload)
- */
-void mesh_client_dfu_ota_finish(uint8_t status);
-
-/*
- * DFU state callback is executed as a result of the Get operation or when DFU state is changed locally.
- */
-typedef void(*mesh_client_dfu_status_t)(uint8_t state, uint8_t *p_data, uint32_t data_length);
-
-/*
-* The function can be called to get status of a DFU process
-*/
-int mesh_client_dfu_get_status(mesh_client_dfu_status_t p_dfu_status_callback, uint32_t interval);
 
 /*
  * On/Off state callback is executed as a result of the Get/Set operation or when state of the device is changed locally

@@ -1,5 +1,5 @@
 /*
- * Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
+ * Copyright 2016-2020, Cypress Semiconductor Corporation or a subsidiary of
  * Cypress Semiconductor Corporation. All Rights Reserved.
  *
  * This software, including source code, documentation and related
@@ -61,6 +61,10 @@
 #include "wiced_bt_mesh_provision.h"
 #include "wiced_bt_mesh_client.h"
 #include "wiced_bt_mesh_db.h"
+#ifdef MESH_DFU_ENABLED
+#include "wiced_bt_mesh_dfu.h"
+#include "wiced_mesh_client_dfu.h"
+#endif
 
 //#ifndef CLIENTCONTROL
 extern void ods(char * fmt_str, ...);
@@ -316,8 +320,6 @@ typedef struct
     uint16_t    provisioner_addr;   // address of the device who performs provisioning
     char *      provisioning_device_name; // name of the device being provisioned
     uint16_t    proxy_addr;         // Address of GATT Proxy
-    uint16_t    dfu_group_addr;     // Address of the group performing upgrade
-    uint8_t     *p_dfu_status_data; // DFU status data
     uint16_t    device_key_addr;    // address of the device key configured in the local device
     uint8_t     db_changed;         // set to true if database changes during any operation
     uint8_t     identify_duration;
@@ -339,7 +341,6 @@ typedef struct
     wiced_bt_mesh_config_composition_data_status_data_t *p_local_composition_data;
     mesh_client_network_opened_t p_opened_callback;
     mesh_client_component_info_status_t p_component_info_status_callback;
-    mesh_client_dfu_status_t p_dfu_status_callback;
     mesh_client_unprovisioned_device_t p_unprovisioned_device;
     mesh_client_provision_status_t p_provision_status;
     mesh_client_connect_status_t p_connect_status;
@@ -358,17 +359,9 @@ typedef struct
     mesh_client_vendor_specific_data_t p_vendor_specific_data;
     pending_operation_t *p_first;
     wiced_timer_t op_timer;
-    wiced_timer_t dfu_status_timer;
 } mesh_provision_cb_t;
 
 mesh_provision_cb_t provision_cb = { 0 };
-
-typedef struct
-{
-    mesh_dfu_fw_id_t firmware_id;
-} mesh_dfu_cb_t;
-
-mesh_dfu_cb_t dfu_cb;
 
 static void start_next_op(mesh_provision_cb_t *p_cb);
 static void clean_pending_op_queue(uint16_t addr);
@@ -456,7 +449,6 @@ static void mesh_process_scan_capabilities_status(mesh_provision_cb_t *p_cb, wic
 static void mesh_process_scan_status(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_scan_status_data_t *p_data);
 static void mesh_process_scan_report(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_scan_report_data_t *p_data);
 static void mesh_process_scan_extended_report(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_scan_extended_report_data_t *p_data);
-static void mesh_process_fw_distribution_status(wiced_bt_mesh_event_t *p_event, void *p);
 static void mesh_process_light_lc_mode_status(wiced_bt_mesh_event_t* p_event, void* p_data);
 static void mesh_process_light_lc_occupancy_mode_status(wiced_bt_mesh_event_t* p_event, void* p);
 static void mesh_process_light_lc_property_status(wiced_bt_mesh_event_t* p_event, void* p_data);
@@ -487,10 +479,9 @@ static void download_rpl_list(void);
 static void rand128(uint8_t *p_array);
 static uint16_t rand16();
 static wiced_bool_t model_needs_sub(uint16_t model_id, wiced_bt_mesh_db_model_id_t *p_models_array);
-static wiced_bt_mesh_event_t *mesh_create_control_event(wiced_bt_mesh_db_mesh_t *p_mesh_db, uint16_t company_id, uint16_t model_id, uint16_t dst, uint16_t app_key_idx);
+wiced_bt_mesh_event_t *mesh_create_control_event(wiced_bt_mesh_db_mesh_t *p_mesh_db, uint16_t company_id, uint16_t model_id, uint16_t dst, uint16_t app_key_idx);
 static void scan_timer_cb(TIMER_PARAM_TYPE arg);
 static void provision_timer_cb(TIMER_PARAM_TYPE arg);
-static void dfu_status_timer_cb(TIMER_PARAM_TYPE arg);
 static wiced_bool_t add_filter(mesh_provision_cb_t *p_cb, uint16_t addr);
 wiced_bool_t get_control_method(const char *method_name, uint16_t *company_id, uint16_t *model_id);
 wiced_bool_t get_target_method(const char *method_name, uint16_t *company_id, uint16_t *model_id);
@@ -1609,217 +1600,6 @@ uint8_t mesh_client_get_component_info(char *component_name, mesh_client_compone
 
     wiced_bt_mesh_model_property_client_send_property_get(p_event, &get_data);
     return MESH_CLIENT_SUCCESS;
-}
-
-/*
- * Current version of the DFU, will use Proxy device as a Distributor node, and all other nodes with the same CID/PID/VID as Updating nodes.
- */
-int mesh_client_dfu_start(uint8_t* fw_id, uint8_t fw_id_len, uint8_t* meta_data, uint8_t meta_data_len, wiced_bool_t auto_apply, wiced_bool_t self_distributor)
-{
-    wiced_bt_mesh_fw_distribution_start_data_t start_data;
-    mesh_provision_cb_t *p_cb = &provision_cb;
-    wiced_bt_mesh_event_t *p_event;
-    uint16_t num_nodes = 0;
-    char     group_name[10];
-    uint16_t distributor_addr;
-    uint16_t fw_cid;
-    uint16_t fw_pid;
-    uint16_t fw_vid;
-    int i;
-
-    if (p_mesh_db == NULL)
-    {
-        Log("Network closed\n");
-        return MESH_CLIENT_ERR_NETWORK_CLOSED;
-    }
-    if (!mesh_client_is_proxy_connected())
-    {
-        Log("not connected\n");
-        return MESH_CLIENT_ERR_NOT_CONNECTED;
-    }
-
-    if (self_distributor)
-        distributor_addr = p_cb->unicast_addr;
-    else
-        distributor_addr = 0;
-
-    // Add nodes with the same CID to the list
-    start_data.group_size = 0;
-    fw_cid = (((uint16_t)fw_id[1]) << 8) + fw_id[0];
-    for (i = 0; i < p_mesh_db->num_nodes; i++)
-    {
-        if (p_mesh_db->node[i].cid == fw_cid)
-        {
-            if (fw_cid == MESH_COMPANY_ID_CYPRESS)
-            {
-                fw_pid = (((uint16_t)fw_id[3]) << 8) + fw_id[2];
-                fw_vid = (((uint16_t)fw_id[5]) << 8) + fw_id[4];
-
-                if (p_mesh_db->node[i].pid != fw_pid || p_mesh_db->node[i].vid != fw_vid)
-                    continue;
-            }
-            // for each device that we are adding to the group, core needs to know the device key to configure subscription
-            mesh_configure_set_local_device_key(p_mesh_db->node[i].unicast_address);
-            start_data.update_nodes_list[start_data.group_size++] = p_mesh_db->node[i].unicast_address;
-        }
-    }
-
-    if (start_data.group_size == 0)
-    {
-        Log("Nothing to upgrade\n");
-        return MESH_CLIENT_ERR_NOT_FOUND;
-    }
-
-    sprintf(group_name, "dfu_0001");
-    mesh_client_group_create(group_name, NULL);
-    start_data.group_addr = wiced_bt_mesh_db_group_get_addr(p_mesh_db, group_name);
-    start_data.proxy_addr = p_cb->proxy_addr;
-    p_cb->dfu_group_addr = start_data.group_addr;
-
-    start_data.firmware_id.fw_id_len = fw_id_len;
-    memcpy(start_data.firmware_id.fw_id, fw_id, start_data.firmware_id.fw_id_len);
-    start_data.meta_data.len = meta_data_len;
-    memcpy(start_data.meta_data.data, meta_data, start_data.meta_data.len);
-
-    p_event = mesh_create_control_event(p_mesh_db, MESH_COMPANY_ID_BT_SIG, WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT, p_cb->proxy_addr, p_mesh_db->app_key[0].index);
-    if (p_event == NULL)
-    {
-        Log("no memory\n");
-        return MESH_CLIENT_ERR_NO_MEMORY;
-    }
-    p_event->dst = distributor_addr;
-
-    if (!wiced_bt_mesh_fw_provider_start(p_event, &start_data, mesh_provision_process_event))
-    {
-        Log("Failed to start DFU\n");
-        return MESH_CLIENT_ERR_PROCEDURE_NOT_COMPLETE;
-    }
-
-    dfu_cb.firmware_id = start_data.firmware_id;
-    return MESH_CLIENT_SUCCESS;
-}
-
-void mesh_client_dfu_clean_up(void)
-{
-    mesh_provision_cb_t* p_cb = &provision_cb;
-    char group_name[10];
-
-    if (p_cb->dfu_group_addr != 0)
-    {
-        sprintf(group_name, "dfu_0001");
-        mesh_client_group_delete(group_name);
-
-        p_cb->dfu_group_addr = 0;
-    }
-
-    wiced_stop_timer(&p_cb->dfu_status_timer);
-    wiced_deinit_timer(&p_cb->dfu_status_timer);
-}
-
-/*
- * The function can be called to stop DFU process
- */
-int mesh_client_dfu_stop(void)
-{
-    mesh_provision_cb_t *p_cb = &provision_cb;
-    wiced_bt_mesh_event_t *p_event;
-
-    if (p_mesh_db == NULL)
-    {
-        Log("Network closed\n");
-        return MESH_CLIENT_ERR_NETWORK_CLOSED;
-    }
-    if (!mesh_client_is_proxy_connected())
-    {
-        Log("not connected\n");
-        return MESH_CLIENT_ERR_NOT_CONNECTED;
-    }
-    if (p_cb->dfu_group_addr == 0)
-    {
-        Log("Please get DFU status first\n");
-        return MESH_CLIENT_ERR_INVALID_STATE;
-    }
-
-    p_event = mesh_create_control_event(p_mesh_db, MESH_COMPANY_ID_BT_SIG, WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT, p_cb->dfu_group_addr, p_mesh_db->app_key[0].index);
-    if (p_event == NULL)
-        return MESH_CLIENT_ERR_NO_MEMORY;
-
-    wiced_bt_mesh_fw_provider_stop(p_event);
-    mesh_client_dfu_clean_up();
-
-    return MESH_CLIENT_SUCCESS;
-}
-
-/*
- * Get Status of the current distribution process
- */
-int mesh_client_dfu_get_status(mesh_client_dfu_status_t p_dfu_status_callback, uint32_t interval)
-{
-    wiced_bt_mesh_db_node_t *p_distributor_node = NULL;
-    mesh_provision_cb_t *p_cb = &provision_cb;
-    wiced_bt_mesh_event_t *p_event;
-
-    // If callback is null, stop getting status
-    if (p_dfu_status_callback == NULL)
-    {
-        p_cb->p_dfu_status_callback = NULL;
-        wiced_stop_timer(&p_cb->dfu_status_timer);
-        return MESH_CLIENT_SUCCESS;
-    }
-
-    if (p_mesh_db == NULL)
-    {
-        Log("Network closed\n");
-        return MESH_CLIENT_ERR_NETWORK_CLOSED;
-    }
-    if (!mesh_client_is_proxy_connected())
-    {
-        mesh_client_connect_network(1, 7);
-        return MESH_CLIENT_ERR_NOT_CONNECTED;
-    }
-    // find DFU group address.  if address is 0, that means that the app was restarted.
-    if (p_cb->dfu_group_addr == 0)
-    {
-        char group_name[10];
-
-        sprintf(group_name, "dfu_0001");
-        if ((p_cb->dfu_group_addr = wiced_bt_mesh_db_group_get_addr(p_mesh_db, group_name)) == 0)
-        {
-            Log("DFU is not started\n");
-            return MESH_CLIENT_ERR_INVALID_STATE;
-        }
-    }
-
-    p_event = mesh_create_control_event(p_mesh_db, MESH_COMPANY_ID_BT_SIG, WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT, p_cb->dfu_group_addr, p_mesh_db->app_key[0].index);
-    if (p_event == NULL)
-        return MESH_CLIENT_ERR_NO_MEMORY;
-
-    p_cb->p_dfu_status_callback = p_dfu_status_callback;
-
-    wiced_bt_mesh_fw_provider_get_status(p_event, mesh_provision_process_event);
-
-    if (interval)
-    {
-        wiced_init_timer(&p_cb->dfu_status_timer, dfu_status_timer_cb, NULL, WICED_SECONDS_PERIODIC_TIMER);
-        wiced_start_timer(&p_cb->dfu_status_timer, interval);
-    }
-
-    return MESH_CLIENT_SUCCESS;
-}
-
-void dfu_status_timer_cb(TIMER_PARAM_TYPE arg)
-{
-    mesh_provision_cb_t* p_cb = &provision_cb;
-
-    mesh_client_dfu_get_status(p_cb->p_dfu_status_callback, 0);
-}
-
-/*
- * Report OTA event to DFU (when OTA is used for image upload)
- */
-void mesh_client_dfu_ota_finish(uint8_t status)
-{
-    wiced_bt_mesh_fw_provider_ota_finish(status);
 }
 
 int element_is_in_group(uint16_t element_addr, uint16_t group_addr)
@@ -3445,9 +3225,11 @@ void mesh_provision_process_event(uint16_t event, wiced_bt_mesh_event_t *p_event
         mesh_process_scan_extended_report(p_cb, p_event, (wiced_bt_mesh_provision_scan_extended_report_data_t *)p_data);
         return;
 
+#ifdef MESH_DFU_ENABLED
     case WICED_BT_MESH_FW_DISTRIBUTION_STATUS:
         mesh_process_fw_distribution_status(p_event, p_data);
         return;
+#endif
 
     case WICED_BT_MESH_HEALTH_ATTENTION_STATUS:
         mesh_process_health_attention_status(p_event, p_data);
@@ -6488,13 +6270,15 @@ void configure_queue_remote_device_operations(mesh_provision_cb_t *p_cb)
                 default_trans_time_model_present = WICED_TRUE;
 
             if ((model_id == WICED_BT_MESH_CORE_MODEL_ID_HEALTH_SRV) ||
-                (model_id == WICED_BT_MESH_CORE_MODEL_ID_HEALTH_CLNT) ||
+#ifdef MESH_DFU_ENABLED
                 (model_id == WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) ||
                 (model_id == WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) ||
                 (model_id == WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV) ||
                 (model_id == WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT) ||
                 (model_id == WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV) ||
-                (model_id == WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT))
+                (model_id == WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT) ||
+#endif
+                (model_id == WICED_BT_MESH_CORE_MODEL_ID_HEALTH_CLNT))
             {
                 if (!app_key_added)
                 {
@@ -9215,57 +8999,6 @@ void mesh_process_scan_extended_report(mesh_provision_cb_t *p_cb, wiced_bt_mesh_
     wiced_bt_mesh_release_event(p_event);
 }
 
-void mesh_process_fw_distribution_status(wiced_bt_mesh_event_t *p_event, void *p)
-{
-    mesh_provision_cb_t *p_cb = &provision_cb;
-    wiced_bt_mesh_fw_distribution_status_data_t *p_status = (wiced_bt_mesh_fw_distribution_status_data_t *)p;
-    uint8_t *p_data = NULL;
-    uint32_t data_length = 0;
-
-    if (p_event)
-        wiced_bt_mesh_release_event(p_event);
-
-    if (p_status->num_nodes)
-    {
-        if (p_status->state == WICED_BT_MESH_DFU_STATE_UPLOAD)
-        {
-            p_data = &p_status->node[0].progress;
-            data_length = 1;
-        }
-        else if (p_status->state == WICED_BT_MESH_DFU_STATE_DISTRIBUTE || p_status->state == WICED_BT_MESH_DFU_STATE_COMPLETE)
-        {
-            if (!p_cb->p_dfu_status_data)
-            {
-                p_cb->p_dfu_status_data = wiced_bt_get_buffer(p_status->list_size * 4 + 2);
-                if (!p_cb->p_dfu_status_data)
-                    return;
-                memcpy(p_cb->p_dfu_status_data, &p_status->list_size, 2);
-            }
-            memcpy(p_cb->p_dfu_status_data + 2 + (p_status->node_index * 4), &p_status->node[0], p_status->num_nodes * 4);
-
-            if (p_status->list_size > p_status->node_index + p_status->num_nodes)
-                return;
-
-            p_data = p_cb->p_dfu_status_data;
-            data_length = p_status->list_size * 4 + 2;
-        }
-    }
-
-    if (p_cb->p_dfu_status_callback != NULL)
-    {
-        p_cb->p_dfu_status_callback(p_status->state, p_data, data_length);
-    }
-
-    if (p_cb->p_dfu_status_data)
-    {
-        wiced_bt_free_buffer(p_cb->p_dfu_status_data);
-        p_cb->p_dfu_status_data = NULL;
-    }
-
-    if (p_status->state == WICED_BT_MESH_DFU_STATE_COMPLETE || p_status->state == WICED_BT_MESH_DFU_STATE_FAILED)
-        mesh_client_dfu_clean_up();
-}
-
 void mesh_process_on_off_status(wiced_bt_mesh_event_t *p_event, void *p)
 {
     mesh_provision_cb_t *p_cb = &provision_cb;
@@ -9408,12 +9141,14 @@ wiced_bool_t is_core_model(uint16_t company_id, uint16_t model_id)
     case WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT:
     case WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_SRV:
     case WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_CLNT:
+#ifdef MESH_DFU_ENABLED
     case WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV:
     case WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT:
     case WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV:
     case WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT:
     case WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV:
     case WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT:
+#endif
             return WICED_TRUE;
     default:
         return WICED_FALSE;
@@ -10018,4 +9753,14 @@ uint16_t mesh_client_fix_lightness(uint16_t dst, uint16_t lightness)
     {
     }
     return lightness;
+}
+
+uint16_t mesh_client_get_unicast_addr()
+{
+    return provision_cb.unicast_addr;
+}
+
+uint16_t mesh_client_get_proxy_addr()
+{
+    return provision_cb.proxy_addr;
 }

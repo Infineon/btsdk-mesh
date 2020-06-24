@@ -1,5 +1,5 @@
 /*
- * Copyright 2020, Cypress Semiconductor Corporation or a subsidiary of
+ * Copyright 2016-2020, Cypress Semiconductor Corporation or a subsidiary of
  * Cypress Semiconductor Corporation. All Rights Reserved.
  *
  * This software, including source code, documentation and related
@@ -69,6 +69,9 @@
 #include "wiced_bt_mesh_app.h"
 #include "wiced_bt_mesh_client.h"
 #include "wiced_bt_mesh_core.h"
+#ifdef MESH_DFU_SUPPORTED
+#include "wiced_bt_mesh_dfu.h"
+#endif
 #include "wiced_bt_trace.h"
 #include "mesh_application.h"
 #include "hci_control_api.h"
@@ -84,6 +87,7 @@
 #include "hcidefs.h"
 #endif
 #include "wiced_hal_wdog.h"
+#include "wiced_bt_factory_app_config.h"
 #include "wiced_bt_stack.h"
 #include "wiced_hal_rand.h"
 #include "wiced_bt_l2c.h"
@@ -219,9 +223,9 @@ uint16_t mesh_nvm_idx_seq;
  *          Variables Definitions
  ******************************************************/
 #ifdef STATIC_OOB_DATA
-// In real product, Static OOB Data should be written in static section flash during manufacturing
-uint8_t static_oob_data[16] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f };
-uint8_t static_oob_data_len = 16;
+// Static OOB Data should be written in static section flash during manufacturing
+uint8_t static_oob_data[16];
+uint8_t static_oob_data_len = 0;
 #endif
 
 #define STATIC_UUID
@@ -520,13 +524,27 @@ void mesh_application_init(void)
 #else
     if (mesh_nvram_access(WICED_FALSE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result) != 16)
     {
-        // Generate UUID and save it in the NVRAM
-        mesh_application_gen_uuid(init.device_uuid);
+        // This is the first time for this app is running after the factory reset.
+        // Check if UUID data have been configured in the factory
+        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, init.device_uuid, sizeof(init.device_uuid)) != sizeof(init.device_uuid))
+        {
+            // Not programmed at factory, generate UUID
+            mesh_application_gen_uuid(init.device_uuid);
+        }
+        // Save UUID in the NVRAM for future use
         if (16 != mesh_nvram_access(WICED_TRUE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result))
         {
             WICED_BT_TRACE("failed to save UUID result:%x UUID:\n", result);
         }
     }
+#ifdef STATIC_OOB_DATA
+    // Check if we have OOB Static Data program in the factory
+    static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data));
+    if (static_oob_data_len != 0)
+    {
+        WICED_BT_TRACE_ARRAY(static_oob_data, static_oob_data_len, "static OOB:");
+    }
+#endif
     // First 6 bytes and last 6 are random. Use them for BT addresses
     memcpy(init.non_provisioned_bda, init.device_uuid, 6);
     memcpy(init.provisioned_bda, &init.device_uuid[10], 6);
@@ -534,8 +552,7 @@ void mesh_application_init(void)
     init.non_provisioned_bda[0] |= 0xc0;
     init.provisioned_bda[0] |= 0xc0;
 #endif
-    WICED_BT_TRACE("UUID:\n");
-    WICED_BT_TRACE_ARRAY(init.device_uuid, 16, "");
+    WICED_BT_TRACE_ARRAY(init.device_uuid, 16, "UUID:");
 
     // Remove this line if MeshClient supports proxy on demand
     wiced_bt_mesh_core_proxy_on_demand_advert_to = 0;
@@ -587,6 +604,7 @@ void mesh_application_init(void)
 #endif
 
 #ifdef STATIC_OOB_DATA
+    if (static_oob_data_len != 0)
     {
         wiced_bt_mesh_provision_capabilities_data_t provision_caps;
 
@@ -606,9 +624,13 @@ void mesh_application_init(void)
         if (mesh_config.oob == 0)
             mesh_config.oob = (WICED_BT_MESH_CORE_OOB_BIT_OTHER | WICED_BT_MESH_CORE_OOB_BIT_NUMBER);
     }
-#else
-    wiced_bt_mesh_app_provision_server_init(pb_priv_key, NULL);
+    else
 #endif
+    // If STATIC_OOB_DATA is not specified, or static OOB data that has not been read from the static section
+    // don't register callback and try to provision with no oob data
+    {
+        wiced_bt_mesh_app_provision_server_init(pb_priv_key, NULL);
+    }
 
     if (wiced_bt_mesh_app_func_table.p_mesh_app_init)
     {
@@ -896,12 +918,14 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_CLNT) &&
+#ifdef MESH_DFU_SUPPORTED
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT) &&
+#endif
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_CLNT))))
     {
         p_message_handler = p_app_model_message_handler;
