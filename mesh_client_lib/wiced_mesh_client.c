@@ -4146,6 +4146,7 @@ void mesh_provision_connecting_link_status(mesh_provision_cb_t *p_cb, wiced_bt_m
 
 void mesh_provision_process_device_caps(mesh_provision_cb_t *p_cb, wiced_bt_mesh_event_t *p_event, wiced_bt_mesh_provision_device_capabilities_data_t *p_data)
 {
+    int i;
     uint8_t db_changed;
     uint16_t src = (p_event != NULL) ? p_event->src : 0;
 
@@ -4156,6 +4157,14 @@ void mesh_provision_process_device_caps(mesh_provision_cb_t *p_cb, wiced_bt_mesh
     p_cb->state = PROVISION_STATE_PROVISIONING;
     p_cb->num_elements = p_data->elements_num;
     p_cb->addr = wiced_bt_mesh_db_alloc_unicast_addr(p_mesh_db, p_mesh_db->unicast_addr, p_data->elements_num, &db_changed);
+
+    // Make sure that RPL for the entry with this unicast address does not exist. Can happen after export/import.
+    for (i = 0; i < p_data->elements_num; i++)
+    {
+        mesh_del_seq(p_cb->addr + i);
+        wiced_bt_mesh_core_del_seq(p_cb->addr + i);
+    }
+
     if (db_changed)
     {
         wiced_bt_mesh_db_store(p_mesh_db);
@@ -4172,7 +4181,7 @@ void mesh_provision_process_device_caps(mesh_provision_cb_t *p_cb, wiced_bt_mesh
     start.addr = p_cb->addr;
     start.net_key_idx = 0;      //ToDo: select somehow desired netkey. For now use primary net key (0)
     start.algorithm = 0;
-    start.public_key_type = p_data->pub_key_type;    // use value passed in the capabilities
+    start.public_key_type = 0; // Don't use OOB Pub Key p_data->pub_key_type;    // use value passed in the capabilities
     start.auth_method = ((p_cb->oob_data_len == 0) || (p_data->static_oob_type == 0)) ? 0 : WICED_BT_MESH_PROVISION_START_AUTH_METHOD_STATIC;
     start.auth_action = 0;
     start.auth_size = 0;
@@ -4286,7 +4295,7 @@ void mesh_provision_process_get_oob_data(mesh_provision_cb_t* p_cb, wiced_bt_mes
 {
     if ((p_cb->oob_data_len == 0) || (p_data->type != WICED_BT_MESH_PROVISION_GET_OOB_TYPE_ENTER_STATIC))
     {
-        Log("OOB type not supported\n", p_data->type);
+        Log("OOB type not supported:%d\n", p_data->type);
         return;
     }
     p_event = mesh_configure_create_event(p_data->provisioner_addr, (p_data->provisioner_addr != p_cb->unicast_addr));
@@ -6869,6 +6878,43 @@ int mesh_client_add_component_to_group(const char *component_name, const char *g
                         }
                     }
                 }
+
+                // If this model was configured for publication to the group, modify the publication address keeping
+                // all other parameters of the publication. For example, a sensor may be configure for periodic publications that we want to keep.
+                uint16_t pub_addr;
+                uint16_t app_key_idx;
+                uint8_t  publish_ttl;
+                uint32_t publish_period;
+                uint16_t publish_retransmit_count;
+                uint32_t publish_retransmit_interval;
+                uint8_t  credentials;
+
+                if (wiced_bt_mesh_db_node_model_pub_get(p_mesh_db, p_node->unicast_address + i, p_models_array[j].company_id, p_models_array[j].id, &pub_addr, &app_key_idx, &publish_ttl, &publish_period, &publish_retransmit_count, &publish_retransmit_interval, &credentials)
+                 && ((pub_addr == 0xFFFF) || (pub_addr != group_addr)))
+                {
+                    Log("Model:%4x reconfigure publication to:%4x\n", p_models_array[j].id, group_addr);
+
+                    if ((p_op = (pending_operation_t*)wiced_bt_get_buffer(sizeof(pending_operation_t))) != NULL)
+                    {
+                        memset(p_op, 0, sizeof(pending_operation_t));
+                        p_op->operation = CONFIG_OPERATION_MODEL_PUBLISH;
+                        p_op->p_event = mesh_configure_create_event(dst, (dst != p_cb->unicast_addr));
+                        p_op->uu.model_pub.element_addr = p_node->unicast_address + i;
+                        p_op->uu.model_pub.company_id = p_models_array[j].company_id;
+                        p_op->uu.model_pub.model_id = p_models_array[j].id;
+                        p_op->uu.model_pub.publish_addr[0] = group_addr & 0xff;
+                        p_op->uu.model_pub.publish_addr[1] = (group_addr >> 8) & 0xff;
+                        p_op->uu.model_pub.app_key_idx = app_key_idx;
+
+                        // changing the group, keep using configured pub parameters.
+                        p_op->uu.model_pub.publish_period = publish_period;
+                        p_op->uu.model_pub.publish_ttl = publish_ttl;
+                        p_op->uu.model_pub.publish_retransmit_count = (uint8_t)publish_retransmit_count;
+                        p_op->uu.model_pub.publish_retransmit_interval = (uint16_t)publish_retransmit_interval;
+                        p_op->uu.model_pub.credential_flag = credentials;
+                        configure_pending_operation_queue(p_cb, p_op);
+                    }
+                }
             }
             wiced_bt_free_buffer(p_models_array);
         }
@@ -6878,8 +6924,9 @@ int mesh_client_add_component_to_group(const char *component_name, const char *g
     {
         p_cb->state = PROVISION_STATE_RECONFIGURATION;
         configure_execute_pending_operation(p_cb);
+        return MESH_CLIENT_SUCCESS;
     }
-    return MESH_CLIENT_SUCCESS;
+    return MESH_CLIENT_ERR_NOT_FOUND;
 }
 
 /*
@@ -9163,6 +9210,18 @@ wiced_bool_t is_secondary_element(uint16_t element_addr)
 
     if (p_models_array != NULL)
     {
+        for (i = 0; p_models_array[i].company_id != MESH_COMPANY_ID_UNUSED; i++)
+        {
+            if (p_models_array[i].company_id == MESH_COMPANY_ID_BT_SIG)
+            {
+                if ((p_models_array[i].id == WICED_BT_MESH_CORE_MODEL_ID_LIGHT_HSL_SRV) ||
+                    (p_models_array[i].id == WICED_BT_MESH_CORE_MODEL_ID_LIGHT_CTL_SRV))
+                {
+                    wiced_bt_free_buffer(p_models_array);
+                    return WICED_FALSE;
+                }
+            }
+        }
         for (i = 0; p_models_array[i].company_id != MESH_COMPANY_ID_UNUSED; i++)
         {
             if (p_models_array[i].company_id == MESH_COMPANY_ID_BT_SIG)
