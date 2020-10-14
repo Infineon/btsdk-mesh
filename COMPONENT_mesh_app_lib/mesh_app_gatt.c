@@ -485,7 +485,7 @@ static wiced_bt_gatt_status_t read_handler_(uint16_t conn_id, wiced_bt_gatt_read
     int          attr_len_to_copy;
     uint8_t     buf[2];
 
-#ifndef WICEDX_LINUX
+#if !defined(WICEDX_LINUX) && OTA_FW_UPGRADE
     // if read request is for the OTA FW upgrade service, pass it to the library to process
     if ((p_read_data->handle > HANDLE_OTA_FW_UPGRADE_SERVICE) && (p_read_data->handle <= HANDLE_OTA_FW_UPGRADE_APP_INFO))
     {
@@ -543,7 +543,7 @@ static wiced_bt_gatt_status_t read_handler_(uint16_t conn_id, wiced_bt_gatt_read
 */
 wiced_bt_gatt_status_t mesh_cfm_handler(uint16_t conn_id, uint16_t handle)
 {
-#ifndef WICEDX_LINUX
+#if !defined(WICEDX_LINUX) && OTA_FW_UPGRADE
     // if write request is for the OTA FW upgrade service, pass it to the library to process
     if ((handle > HANDLE_OTA_FW_UPGRADE_SERVICE) && (handle <= HANDLE_OTA_FW_UPGRADE_APP_INFO))
     {
@@ -642,7 +642,7 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
                 // On disconnect ref_data is disconnection reason.
                 wiced_bt_mesh_core_connection_status(0, WICED_FALSE, p_data->connection_status.reason, 20);
             }
-    #ifndef WICEDX_LINUX
+    #if !defined(WICEDX_LINUX) && OTA_FW_UPGRADE
             // Pass connection up/down event to the OTA FW upgrade library
             {
                 wiced_bt_gatt_connection_status_t connection_status = { 0 };
@@ -695,7 +695,7 @@ static wiced_bt_gatt_status_t mesh_write_handler(uint16_t conn_id, wiced_bt_gatt
 
     //WICED_BT_TRACE("write_handler: conn_id:%x handle=%x len=%d\n", conn_id, p_data->handle, len);
     //WICED_BT_TRACE_ARRAY((char*)attr, len, "");
-#ifndef WICEDX_LINUX
+#if !defined(WICEDX_LINUX) && OTA_FW_UPGRADE
 
     // if write request is for the OTA FW upgrade service, pass it to the library to process
     if ((p_data->handle > HANDLE_OTA_FW_UPGRADE_SERVICE) && (p_data->handle <= HANDLE_OTA_FW_UPGRADE_APP_INFO))

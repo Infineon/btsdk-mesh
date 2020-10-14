@@ -130,8 +130,8 @@ extern wiced_platform_button_config_t platform_button[];
 // if defined then prints mesh stats every _DEB_PRINT_MESH_STATS seconds
 //#define _DEB_PRINT_MESH_STATS 30
 
-// dump wiced bt buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
-#define _DEB_PRINT_BUF_USE  5
+// if defined then dump wiced bt buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
+//#define _DEB_PRINT_BUF_USE  5
 
 
 /******************************************************
@@ -596,11 +596,13 @@ void mesh_application_init(void)
     if (!mesh_application_seq_init())
         mesh_application_factory_reset();
 
+#if OTA_FW_UPGRADE
     // Initialize OTA FW upgrade
     if (!wiced_ota_fw_upgrade_init(NULL, mesh_ota_firmware_upgrade_status_callback, mesh_ota_firmware_upgrade_send_data_callback))
     {
         WICED_BT_TRACE("mesh_application_init: wiced_ota_fw_upgrade_init failed\n");
     }
+#endif
 #endif
 
 #ifdef STATIC_OOB_DATA
