@@ -1,10 +1,10 @@
 /*
- * Copyright 2016-2020, Cypress Semiconductor Corporation or a subsidiary of
- * Cypress Semiconductor Corporation. All Rights Reserved.
+ * Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+ * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
- * materials ("Software"), is owned by Cypress Semiconductor Corporation
- * or one of its subsidiaries ("Cypress") and is protected by and subject to
+ * materials ("Software") is owned by Cypress Semiconductor Corporation
+ * or one of its affiliates ("Cypress") and is protected by and subject to
  * worldwide patent protection (United States and foreign),
  * United States copyright laws and international treaty provisions.
  * Therefore, you may use this Software only as provided in the license
@@ -13,7 +13,7 @@
  * If no EULA applies, Cypress hereby grants you a personal, non-exclusive,
  * non-transferable license to copy, modify, and compile the Software
  * source code solely for use in connection with Cypress's
- * integrated circuit products. Any reproduction, modification, translation,
+ * integrated circuit products.  Any reproduction, modification, translation,
  * compilation, or representation of this Software except as specified
  * above is prohibited without the express written permission of Cypress.
  *
@@ -483,12 +483,6 @@ void mesh_application_init(void)
 #endif
 #endif
 
-#if (defined(WICEDX_LINUX) || defined(MESH_CORE_DEBUG_LEVEL))
-    // Set Debug trace level for all modules but Info level for CORE_AES_CCM module
-    wiced_bt_mesh_core_set_trace_level(WICED_BT_MESH_CORE_TRACE_FID_ALL, WICED_BT_MESH_CORE_TRACE_DEBUG);
-    wiced_bt_mesh_core_set_trace_level(WICED_BT_MESH_CORE_TRACE_FID_CORE_AES_CCM, WICED_BT_MESH_CORE_TRACE_INFO);
-#endif
-
 #ifndef MESH_HOMEKIT_COMBO_APP
     /* Initialize wiced app */
 #if (!defined(CYW20735B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
@@ -634,16 +628,16 @@ void mesh_application_init(void)
         wiced_bt_mesh_app_provision_server_init(pb_priv_key, NULL);
     }
 
+#ifdef MESH_DFU_SUPPORTED
+    mesh_app_dfu_init();
+#endif
+
     if (wiced_bt_mesh_app_func_table.p_mesh_app_init)
     {
         wiced_bt_mesh_app_func_table.p_mesh_app_init(node_authenticated);
     }
     // Now start mesh picking up tx power set by app in wiced_bt_mesh_core_adv_tx_power
     wiced_bt_mesh_core_start();
-
-#ifdef MESH_DFU_SUPPORTED
-    mesh_app_dfu_init();
-#endif
 
     WICED_BT_TRACE("***** Free mem after app_init:%d\n", wiced_memory_get_free_bytes());
 }
@@ -1072,6 +1066,15 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
 #ifndef PTS
         mesh_start_stop_scan_callback(p_state->lpn_scan, WICED_FALSE);
 #endif
+#if 0   // Enable app timer in LPN test
+        if (p_state->lpn_scan)
+        {
+            if (!wiced_is_timer_in_use(&app_timer))
+            {
+                wiced_start_timer(&app_timer, MESH_APP_TIMEOUT_IN_SECONDS);
+            }
+        }
+#endif
         break;
 
     case WICED_BT_MESH_CORE_STATE_LPN_SLEEP:
@@ -1184,8 +1187,10 @@ void mesh_setup_nvram_ids()
     wiced_bt_mesh_core_nvm_idx_app_key_begin        = wiced_bt_mesh_core_nvm_idx_net_key_begin  - wiced_bt_mesh_core_app_key_max_num;
     wiced_bt_mesh_core_nvm_idx_health_state         = wiced_bt_mesh_core_nvm_idx_app_key_begin  - 1;
     wiced_bt_mesh_core_nvm_idx_cfg_data             = wiced_bt_mesh_core_nvm_idx_health_state   - ((cfg_data_len + (WICED_BT_MESH_CORE_NVRAM_CHUNK_MAX_SIZE - 1)) / WICED_BT_MESH_CORE_NVRAM_CHUNK_MAX_SIZE);
-    wiced_bt_mesh_core_nvm_idx_fw_distributor       = wiced_bt_mesh_core_nvm_idx_cfg_data       - 1;
-    mesh_nvm_idx_seq                                = wiced_bt_mesh_core_nvm_idx_fw_distributor - 1;
+    mesh_nvm_idx_seq                                = wiced_bt_mesh_core_nvm_idx_cfg_data       - 1;
+#ifndef CYW20706A2
+    wiced_bt_mesh_core_nvm_idx_fw_distributor       = mesh_nvm_idx_seq                          - 1000;
+#endif
 
     WICED_BT_TRACE("setup nvram ids: net_key_max_num:%d app_key_max_num:%d nvm_idx_seq:%x %x-%x cfg_data_len:%d\n", wiced_bt_mesh_core_net_key_max_num, wiced_bt_mesh_core_app_key_max_num, mesh_nvm_idx_seq, wiced_bt_mesh_core_nvm_idx_health_state, WICED_NVRAM_VSID_END, cfg_data_len);
     WICED_BT_TRACE(" node_data:%x net_key_begin:%x app_key_begin:%x\n", wiced_bt_mesh_core_nvm_idx_node_data, wiced_bt_mesh_core_nvm_idx_net_key_begin, wiced_bt_mesh_core_nvm_idx_app_key_begin);

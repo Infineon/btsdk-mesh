@@ -1,10 +1,10 @@
 /*
-* Copyright 2016-2020, Cypress Semiconductor Corporation or a subsidiary of
-* Cypress Semiconductor Corporation. All Rights Reserved.
+* Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+* an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
-* materials ("Software"), is owned by Cypress Semiconductor Corporation
-* or one of its subsidiaries ("Cypress") and is protected by and subject to
+* materials ("Software") is owned by Cypress Semiconductor Corporation
+* or one of its affiliates ("Cypress") and is protected by and subject to
 * worldwide patent protection (United States and foreign),
 * United States copyright laws and international treaty provisions.
 * Therefore, you may use this Software only as provided in the license
@@ -13,7 +13,7 @@
 * If no EULA applies, Cypress hereby grants you a personal, non-exclusive,
 * non-transferable license to copy, modify, and compile the Software
 * source code solely for use in connection with Cypress's
-* integrated circuit products. Any reproduction, modification, translation,
+* integrated circuit products.  Any reproduction, modification, translation,
 * compilation, or representation of this Software except as specified
 * above is prohibited without the express written permission of Cypress.
 *
@@ -113,11 +113,16 @@ void mesh_app_hci_init(void)
 #ifdef CYW20735B1
     wiced_hal_puart_set_baudrate(921600);
 #else
+    // KP3 serial device has problem with 921600, workaround at 3M (and use 2 stop bits):
+#ifdef KITPROG3_USE_2_STOP_BITS
+    wiced_hal_puart_configuration(3000000, PARITY_NONE, STOP_BIT_2);
+#else
     wiced_hal_puart_configuration(921600, PARITY_NONE, STOP_BIT_1);
+#endif // KITPROG3_USE_2_STOP_BITS
 #endif // CYW20735B1
 #endif // CYW20706A2
 #else // _DEB_ENABLE_HCI_TRACE
-    // WICED_ROUTE_DEBUG_TO_WICED_UART to send debug strings over the WICED debug interface */
+    // WICED_ROUTE_DEBUG_TO_WICED_UART to send debug strings over the WICED debug interface
     wiced_set_debug_uart(WICED_ROUTE_DEBUG_TO_WICED_UART);
 #endif // _DEB_ENABLE_HCI_TRACE
 #endif // WICED_BT_TRACE_ENABLE
@@ -232,7 +237,35 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
             WICED_BT_TRACE("***************opcode:  %x\n", opcode);
             WICED_BT_TRACE("***************len:     %d\n", payload_len);
             WICED_BT_TRACE_ARRAY(p_data, length - 4, "***************payload: ");
-            if (opcode == HCI_CONTROL_COMMAND_RESET)
+
+            for (uint16_t i = 0; i < payload_len; i++)
+            {
+                if (i == (payload_len - 1))
+                {
+                    WICED_BT_TRACE("%02X", *(p_data + i));
+                }
+                else
+                {
+                    WICED_BT_TRACE("%02X:", *(p_data + i));
+                }
+            }
+
+            WICED_BT_TRACE("\n");
+
+            if (opcode == 0xFFFF)
+            {
+                WICED_BT_TRACE("***************Reinitialized(Unprovision)\n");
+                mesh_application_factory_reset();
+            } else if (opcode == 0xFFFE)
+            {
+                WICED_BT_TRACE("***************Exit command\n");
+            } else if (opcode == 0xFFFD)
+            {
+                WICED_BT_TRACE("***************Reset system\n");
+            /* Reboot the system */
+                wiced_hal_wdog_reset_system();
+            }
+            else if (opcode == HCI_CONTROL_COMMAND_RESET)
             {
                 wiced_hal_wdog_reset_system();
             }
