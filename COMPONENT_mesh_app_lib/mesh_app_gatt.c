@@ -612,9 +612,9 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
 
         result = WICED_BT_GATT_SUCCESS;
 
-        // If we are in Slave role, this is a connection for Proxy or for Provisioning server.
+        // If we are in Peripheral role, this is a connection for Proxy or for Provisioning server.
         // Otherwise, we are a provisioner and we established connection to a new device or to a proxy device
-        if (p_data->connection_status.link_role == HCI_ROLE_SLAVE)
+        if (p_data->connection_status.link_role == HCI_ROLE_PERIPHERAL)
         {
             if (wiced_bt_mesh_app_func_table.p_mesh_app_gatt_conn_status)
             {

@@ -76,7 +76,7 @@
 #include "mesh_application.h"
 #include "hci_control_api.h"
 #include "wiced_memory.h"
-#if ( defined(CYW20735B0) || defined(CYW20735B1) )
+#if ( defined(CYW20735B0) || defined(CYW20735B1) || defined(CYW20835B1) )
 #include "wiced_gki.h"
 #endif
 #include "wiced_bt_ota_firmware_upgrade.h"
@@ -218,6 +218,7 @@ extern uint16_t wiced_bt_mesh_core_lpn_get_friend_addr(void);
 extern void wiced_bt_mesh_core_shutdown(void);
 // NVM index for SEQ
 uint16_t mesh_nvm_idx_seq;
+uint8_t  mesh_notify_host_seq_change = 1;
 
 /******************************************************
  *          Variables Definitions
@@ -485,7 +486,7 @@ void mesh_application_init(void)
 
 #ifndef MESH_HOMEKIT_COMBO_APP
     /* Initialize wiced app */
-#if (!defined(CYW20735B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
+#if (!defined(CYW20735B1) && !defined(CYW20835B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
     wiced_bt_app_init();
 #endif
 
@@ -1006,7 +1007,8 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
 
         //WICED_BT_TRACE("mesh_state_changed_cb: addr:%x seq:%x previous_iv_idx:%d\n", p_state->seq.addr, p_state->seq.seq, p_state->seq.previous_iv_idx);
 #ifdef HCI_CONTROL
-        mesh_app_hci_send_seq_changed(&p_state->seq);
+        if (mesh_notify_host_seq_change)
+            mesh_app_hci_send_seq_changed(&p_state->seq);
 #endif
         break;
 

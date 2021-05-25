@@ -52,7 +52,7 @@
 
 #if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined (CYW20819A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
 #include "wiced_memory.h"
-#elif ( defined(CYW20735B0) || defined(CYW20735B1) )
+#elif ( defined(CYW20735B0) || defined(CYW20735B1) || defined(CYW20835B1) )
 #include "wiced_gki.h"
 #endif
 

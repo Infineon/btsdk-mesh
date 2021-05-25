@@ -71,20 +71,20 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
 
         .high_duty_scan_interval         = 96,                                                       // High duty scan interval
         .high_duty_scan_window           = 96,                                                       // High duty scan window
-        .high_duty_scan_duration         = 0,                                                        // High duty scan duration in seconds (0 for infinite)
+        .high_duty_scan_duration         = 0,                                                        // High duty scan duration in seconds
 
         .low_duty_scan_interval          = 96,                                                       // Low duty scan interval
         .low_duty_scan_window            = 96,                                                       // Low duty scan window
-        .low_duty_scan_duration          = 0,                                                        // Low duty scan duration in seconds (0 for infinite)
+        .low_duty_scan_duration          = 0,                                                        // Low duty scan duration in seconds
 
         /* Connection scan intervals */
         .high_duty_conn_scan_interval    = WICED_BT_CFG_DEFAULT_HIGH_DUTY_CONN_SCAN_INTERVAL,        // High duty cycle connection scan interval
         .high_duty_conn_scan_window      = WICED_BT_CFG_DEFAULT_HIGH_DUTY_CONN_SCAN_WINDOW,          // High duty cycle connection scan window
-        .high_duty_conn_duration         = 30,                                                       // High duty cycle connection duration in seconds (0 for infinite)
+        .high_duty_conn_duration         = 30,                                                       // High duty cycle connection duration in seconds
 
         .low_duty_conn_scan_interval     = WICED_BT_CFG_DEFAULT_LOW_DUTY_CONN_SCAN_INTERVAL,         // Low duty cycle connection scan interval
         .low_duty_conn_scan_window       = WICED_BT_CFG_DEFAULT_LOW_DUTY_CONN_SCAN_WINDOW,           // Low duty cycle connection scan window
-        .low_duty_conn_duration          = 30,                                                       // Low duty cycle connection duration in seconds (0 for infinite)
+        .low_duty_conn_duration          = 30,                                                       // Low duty cycle connection duration in seconds
 
         /* Connection configuration */
         .conn_min_interval               = WICED_BT_CFG_DEFAULT_CONN_MIN_INTERVAL,                    // Minimum connection interval, 112 * 1.25 = 140ms.
@@ -101,26 +101,26 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
 
         .high_duty_min_interval          = WICED_BT_CFG_DEFAULT_HIGH_DUTY_ADV_MIN_INTERVAL,          // High duty undirected connectable minimum advertising interval 48 *0.625 = 30ms
         .high_duty_max_interval          = WICED_BT_CFG_DEFAULT_HIGH_DUTY_ADV_MAX_INTERVAL,          // High duty undirected connectable maximum advertising interval
-        .high_duty_duration              = 30,                                                       // High duty undirected connectable advertising duration in seconds (0 for infinite)
+        .high_duty_duration              = 30,                                                       // High duty undirected connectable advertising duration in seconds
 
         .low_duty_min_interval           = 1024,                                                     // Low duty undirected connectable minimum advertising interval. 2048 *0.625 = 1.28s
         .low_duty_max_interval           = 1024,                                                     // Low duty undirected connectable maximum advertising interval
-        .low_duty_duration               = 60,                                                       // Low duty undirected connectable advertising duration in seconds (0 for infinite)
+        .low_duty_duration               = 60,                                                       // Low duty undirected connectable advertising duration in seconds
 
         .high_duty_directed_min_interval = WICED_BT_CFG_DEFAULT_HIGH_DUTY_DIRECTED_ADV_MIN_INTERVAL, // High duty directed connectable minimum advertising interval
         .high_duty_directed_max_interval = WICED_BT_CFG_DEFAULT_HIGH_DUTY_DIRECTED_ADV_MAX_INTERVAL, // High duty directed connectable maximum advertising interval
 
         .low_duty_directed_min_interval  = WICED_BT_CFG_DEFAULT_LOW_DUTY_DIRECTED_ADV_MIN_INTERVAL,  // Low duty directed connectable minimum advertising interval
         .low_duty_directed_max_interval  = WICED_BT_CFG_DEFAULT_LOW_DUTY_DIRECTED_ADV_MAX_INTERVAL,  // Low duty directed connectable maximum advertising interval
-        .low_duty_directed_duration      = 30,                                                       // Low duty directed connectable advertising duration in seconds (0 for infinite)
+        .low_duty_directed_duration      = 30,                                                       // Low duty directed connectable advertising duration in seconds
 
         .high_duty_nonconn_min_interval  = WICED_BT_CFG_DEFAULT_HIGH_DUTY_NONCONN_ADV_MIN_INTERVAL,  // High duty non-connectable minimum advertising interval
         .high_duty_nonconn_max_interval  = WICED_BT_CFG_DEFAULT_HIGH_DUTY_NONCONN_ADV_MAX_INTERVAL,  // High duty non-connectable maximum advertising interval
-        .high_duty_nonconn_duration      = 30,                                                       // High duty non-connectable advertising duration in seconds (0 for infinite)
+        .high_duty_nonconn_duration      = 30,                                                       // High duty non-connectable advertising duration in seconds
 
         .low_duty_nonconn_min_interval   = WICED_BT_CFG_DEFAULT_LOW_DUTY_NONCONN_ADV_MIN_INTERVAL,   // Low duty non-connectable minimum advertising interval
         .low_duty_nonconn_max_interval   = WICED_BT_CFG_DEFAULT_LOW_DUTY_NONCONN_ADV_MAX_INTERVAL,   // Low duty non-connectable maximum advertising interval
-        .low_duty_nonconn_duration       = 0                                                         // Low duty non-connectable advertising duration in seconds (0 for infinite)
+        .low_duty_nonconn_duration       = 0                                                         // Low duty non-connectable advertising duration in seconds
     },
 
     .gatt_cfg =                                                                                      // GATT configuration
@@ -129,7 +129,7 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .client_max_links               = 1,                                                         // Client config: maximum number of servers that local client can connect to
         .server_max_links               = 1,                                                         // Server config: maximum number of remote clients connections allowed by the local
         .max_attr_len                   = 357,                                                       // Maximum attribute length; gki_cfg must have a corresponding buffer pool that can hold this length
-#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1)  || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
+#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1)  || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
         .max_mtu_size                   = 360                                                        // Maximum MTU size for GATT connections, should be between 23 and (max_attr_len + 5)
 #endif
 },
@@ -151,7 +151,7 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         /* LE L2cap connection-oriented channels configuration */
         .max_le_psm                     = 0,                                                         // Maximum number of application-managed LE PSMs
         .max_le_channels                = 0,                                                         // Maximum number of application-managed LE channels
-#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined (CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2) )
+#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined (CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2) )
         /* LE L2cap fixed channel configuration */
         .max_le_l2cap_fixed_channels    = 0                                                            // Maximum number of application managed fixed channels supported (in addition to mandatory channels 4, 5 and 6).
 #endif
@@ -168,11 +168,11 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .max_links                      = 0                                                          // Maximum simultaneous remote control links
     },
     .addr_resolution_db_size            = 0,                                                         // LE Address Resolution DB settings - effective only for pre 4.2 controller
-#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20819A1) || defined(CYW20820A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
+#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
     .max_number_of_buffer_pools         = 4,                                                         // Maximum number of buffer pools in p_btm_cfg_buf_pools and by wiced_create_pool
     .rpa_refresh_timeout                = 0,                                                         // Interval of  random address refreshing - secs
-#if ( defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
-    .ble_white_list_size                = 0,                                                         // Maximum number of white list devices allowed. Cannot be more than 128
+#if ( defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
+    .ble_filter_accept_list_size                = 0,                                                         // Maximum number of Filter Accept List devices allowed. Cannot be more than 128
 #endif
 #if ( defined(CYW20719B2) || defined(CYW20721B2) || defined(CYW20819A1) || defined (CYW20820A1) )
     .default_ble_power_level            = 0,                                                         // Default LE power level, Refer lm_TxPwrTable table for the power range
@@ -197,5 +197,5 @@ const wiced_bt_cfg_buf_pool_t wiced_bt_cfg_buf_pools[WICED_BT_CFG_NUM_BUF_POOLS]
     { 68,  42 },      /* Small Buffer Pool */
     { 140, 20 },      /* Medium Buffer Pool (used for HCI & RFCOMM control messages, min recommended size is 360) */
     { 392, 10 },      /* Large Buffer Pool  (used for HCI ACL messages) */
-    { 1024, 6 },      /* Extra Large Buffer Pool - Used for avdt media packets and miscellaneous (if not needed, set buf_count to 0) */
+    { 1024, 4 },      /* Extra Large Buffer Pool - Used for avdt media packets and miscellaneous (if not needed, set buf_count to 0) */
 };
