@@ -55,12 +55,22 @@
 #else
 #include "hcidefs.h"
 #endif
+#ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
+#if defined HCI_CONTROL
+#include "wiced_bt_mesh_mdf.h"
+#endif
+#endif
 
 // Enables HCI trace to first(same as app download) com port.
 //#define _DEB_ENABLE_HCI_TRACE
 #define _DEB_ENABLE_HCI_TRACE_NO_BLE_ADV_EVT
 
 static void  mesh_hci_trace_cback(wiced_bt_hci_trace_type_t type, uint16_t length, uint8_t* p_data);
+#ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
+#if defined HCI_CONTROL
+void mesh_df_stats_hci_event_send(void);
+#endif
+#endif
 
 /******************************************************
  *          Function Prototypes
@@ -226,25 +236,10 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
         if (!mesh_application_process_hci_cmd(opcode, p_data, payload_len))
 #endif
         {
-#ifdef PTS
             WICED_BT_TRACE("***************opcode:  %x\n", opcode);
             WICED_BT_TRACE("***************len:     %d\n", payload_len);
             WICED_BT_TRACE_ARRAY(p_data, length - 4, "***************payload: ");
-
-            for (uint16_t i = 0; i < payload_len; i++)
-            {
-                if (i == (payload_len - 1))
-                {
-                    WICED_BT_TRACE("%02X", *(p_data + i));
-                }
-                else
-                {
-                    WICED_BT_TRACE("%02X:", *(p_data + i));
-                }
-            }
-
-            WICED_BT_TRACE("\n");
-
+#ifdef PTS
             if (opcode == 0xFFFF)
             {
                 WICED_BT_TRACE("***************Reinitialized(Unprovision)\n");
@@ -279,6 +274,18 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
             }
             else
 #endif
+            if (opcode == HCI_CONTROL_MESH_COMMAND_HARD_RESET)
+            {
+                mesh_application_hard_reset(p_data, payload_len);
+            }
+            else
+#ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
+#if defined HCI_CONTROL
+            if (opcode == HCI_CONTROL_MESH_COMMAND_DF_STATS_GET)
+                mesh_df_stats_hci_event_send();
+            else
+#endif
+#endif
             {
                 if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
                 {
@@ -302,6 +309,7 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
     int i;
     uint8_t  *p = *p_data;
     wiced_bt_mesh_event_t *p_event;
+    uint8_t flags;
 
     STREAM_TO_UINT16(dst, p);
     STREAM_TO_UINT16(app_key_idx, p);
@@ -315,7 +323,12 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
         p_event->hci_opcode = opcode;
 
         STREAM_TO_UINT8(p_event->reply, p);
-        STREAM_TO_UINT8(p_event->send_segmented, p);
+        STREAM_TO_UINT8(flags, p);
+        p_event->send_segmented = flags & WICED_BT_MESH_HCI_COMMAND_FLAGS_SEND_SEGMENTED;
+        if (flags & WICED_BT_MESH_HCI_COMMAND_FLAGS_TAG_USE_DIRECTED)
+            p_event->flags |= TAG_USE_DIRECTED;
+        if (flags & WICED_BT_MESH_HCI_COMMAND_FLAGS_TAG_IMMUTABLE_CREDENTIALS)
+            p_event->flags |= TAG_IMMUTABLE_CREDENTIALS;
 
         STREAM_TO_UINT8(ttl, p);
         if(ttl <= 0x7F)
@@ -336,7 +349,7 @@ wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode
  */
 void wiced_bt_mesh_skip_wiced_hci_hdr(uint8_t **p_data, uint32_t *len)
 {
-    // skip dst (2), app_key_idx(2), element_idx(1), reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
+    // skip dst (2), app_key_idx(2), element_idx(1), reply(1), flags(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
     *len = *len - 11;
     *p_data = (*p_data + 11);
 }
@@ -353,7 +366,7 @@ uint8_t wiced_bt_mesh_get_element_idx_from_wiced_hci(uint8_t **p_data, uint32_t 
 
     p += 4;  // skip dst(2) and app_key_idx(2)
     STREAM_TO_UINT8(element_idx, p);
-    p += 6;             // reply(1), send_segmented(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
+    p += 6;             // reply(1), flags(1), ttl(1), retrans_cnt(1), retrans_time(1), reply_timeout(1)
     *len = *len - 11;
     *p_data = p;
     return element_idx;
@@ -387,6 +400,44 @@ void mesh_app_hci_send_seq_changed(wiced_bt_mesh_core_state_seq_t *p_seq)
         mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_CORE_SEQ_CHANGED, p_hci_event, (uint16_t)(p - p_hci_event));
     }
 }
+
+#ifdef PTS
+void mesh_app_hci_send_private_beacon(wiced_bt_mesh_core_state_beacon_t *p_beacon)
+{
+    uint8_t *p_hci_event;
+    uint8_t *p;
+    p_hci_event = wiced_transport_allocate_buffer(host_trans_pool);
+    if (p_hci_event != NULL)
+    {
+        p = p_hci_event;
+        UINT8_TO_STREAM(p, p_beacon->flags);
+        memcpy(p, p_beacon->iv_index, 4);
+        p += 4;
+        memcpy(p, p_beacon->random, 13);
+        p += 13;
+        if (p_beacon->bd_addr)
+            memcpy(p, p_beacon->bd_addr, sizeof(wiced_bt_device_address_t));
+        else
+            memset(p, 0, sizeof(wiced_bt_device_address_t));
+        p += sizeof(wiced_bt_device_address_t);
+        mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_PRIVATE_BEACON, p_hci_event, (uint16_t)(p - p_hci_event));
+    }
+}
+
+void mesh_app_hci_send_proxy_service_adv(wiced_bt_mesh_core_state_proxy_serivce_t *p_service)
+{
+    uint8_t *p_hci_event;
+    uint8_t *p;
+    p_hci_event = wiced_transport_allocate_buffer(host_trans_pool);
+    if (p_hci_event != NULL)
+    {
+        p = p_hci_event;
+        UINT8_TO_STREAM(p, p_service->type);
+        UINT16_TO_STREAM(p, p_service->net_key_idx);
+        mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_PROXY_SERVICE_ADV, p_hci_event, (uint16_t)(p - p_hci_event));
+    }
+}
+#endif
 
 wiced_result_t mesh_application_send_hci_event(uint16_t opcode, const uint8_t *p_data, uint16_t data_len)
 {
@@ -539,3 +590,42 @@ wiced_result_t mesh_application_process_hci_cmd(uint16_t opcode, const uint8_t *
     }
     return ret;
 }
+
+#ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
+#if defined HCI_CONTROL
+/*
+ * Send DF statistics Status event over transport
+ */
+void mesh_df_stats_hci_event_send(void)
+{
+    wiced_result_t                  result;
+    wiced_bt_mesh_df_statistics_t   stats;
+    uint8_t                         *p;
+    wiced_bt_mesh_hci_event_t       *p_hci_event;
+
+    if (NULL == (p_hci_event = wiced_bt_mesh_create_hci_event(NULL)))
+    {
+        WICED_BT_TRACE("no buffer to send DF statistics status\n");
+    }
+    else
+    {
+        wiced_bt_mesh_df_statistics_get(&stats);
+        wiced_bt_mesh_df_statistics_reset();
+        uint8_t* p = p_hci_event->data;
+        UINT16_TO_STREAM(p, stats.sent_df_msg_cnt);
+        UINT16_TO_STREAM(p, stats.relayed_df_to_df_msg_cnt);
+        UINT16_TO_STREAM(p, stats.relayed_df_to_flood_msg_cnt);
+        UINT16_TO_STREAM(p, stats.relayed_flood_to_df_msg_cnt);
+        UINT16_TO_STREAM(p, stats.relayed_flood_to_flood_msg_cnt);
+        UINT16_TO_STREAM(p, stats.received_df_msg_cnt);
+        UINT16_TO_STREAM(p, stats.sent_df_access_msg_cnt);
+        UINT16_TO_STREAM(p, stats.received_df_access_msg_cnt);
+        result = mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_DF_STATS_STATUS, (uint8_t*)p_hci_event, (uint16_t)(p - (uint8_t*)p_hci_event));
+        WICED_BT_TRACE("sent df stats: result:%d access sent/resceived:%d/%d sent/received%d/%d relayed df_to_df/df_to_flood/flood_to_df/flood_to_flood:%d/%d/%d/%d\n",
+            result, stats.sent_df_access_msg_cnt, stats.received_df_access_msg_cnt,
+            stats.sent_df_msg_cnt, stats.received_df_msg_cnt, stats.relayed_df_to_df_msg_cnt,
+            stats.relayed_df_to_flood_msg_cnt, stats.relayed_flood_to_df_msg_cnt, stats.relayed_flood_to_flood_msg_cnt);
+    }
+}
+#endif
+#endif

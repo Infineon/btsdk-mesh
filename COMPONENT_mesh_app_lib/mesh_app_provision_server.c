@@ -194,7 +194,11 @@ wiced_bool_t mesh_app_provision_get_capabilities(uint32_t conn_id)
     wiced_bt_mesh_core_provision_capabilities_t capabilities;
     memset(&capabilities, 0, sizeof(capabilities));
     capabilities.elements_num = mesh_config.elements_num;
+#ifdef ENHANCED_PROVISIONING_AUTHENTICATION
+    UINT16TOBE2(capabilities.algorithms, WICED_BT_MESH_PROVISION_ALG_FIPS_P256_ELLIPTIC_CURVE | WICED_BT_MESH_PROVISION_ALG_ECDH_P256_HMAC_SHA256_AES_CCM);
+#else
     UINT16TOBE2(capabilities.algorithms, WICED_BT_MESH_PROVISION_ALG_FIPS_P256_ELLIPTIC_CURVE);
+#endif
     capabilities.pub_key_type = provisioning_config.pub_key_type;    // WICED_BT_MESH_PROVISION_CAPS_PUB_KEY_TYPE_AVAILABLE
     capabilities.static_oob_type = provisioning_config.static_oob_type;
     UINT16TOBE2(capabilities.output_oob_action, provisioning_config.output_oob_action);

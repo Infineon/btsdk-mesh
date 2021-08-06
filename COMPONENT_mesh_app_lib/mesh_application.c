@@ -72,6 +72,9 @@
 #ifdef MESH_DFU_SUPPORTED
 #include "wiced_bt_mesh_dfu.h"
 #endif
+#ifdef PRIVATE_PROXY_SUPPORTED
+#include "wiced_bt_mesh_private_proxy.h"
+#endif
 #include "wiced_bt_trace.h"
 #include "mesh_application.h"
 #include "hci_control_api.h"
@@ -201,8 +204,8 @@ static wiced_bool_t             mesh_application_seq_save(wiced_bt_mesh_core_sta
 static wiced_bool_t             mesh_application_seq_init(void);
 static wiced_bool_t             mesh_application_rpl_clr(void);
 
-#define STATIC_OOB_DATA
-#ifdef STATIC_OOB_DATA
+#define SECURE_PROVISIONING
+#ifdef SECURE_PROVISIONING
 static void mesh_app_process_oob_get(wiced_bt_mesh_provision_device_oob_request_data_t *p_data);
 static void mesh_app_provision_message_handler(uint16_t event, void *p_data);
 #endif
@@ -223,7 +226,11 @@ uint8_t  mesh_notify_host_seq_change = 1;
 /******************************************************
  *          Variables Definitions
  ******************************************************/
-#ifdef STATIC_OOB_DATA
+#ifdef SECURE_PROVISIONING
+// Static private key should be written in static section flash during manufacturing
+uint8_t static_private_key[WICED_BT_MESH_PROVISION_PRIV_KEY_LEN];
+uint8_t static_private_key_len = 0;
+
 // Static OOB Data should be written in static section flash during manufacturing
 uint8_t static_oob_data[16];
 uint8_t static_oob_data_len = 0;
@@ -250,8 +257,26 @@ wiced_bool_t mesh_config_client = WICED_FALSE;
 wiced_bool_t node_authenticated = WICED_FALSE;
 wiced_bool_t pb_gatt_in_progress = WICED_FALSE;
 
+// NVRAM IDs used by mesh models library
+uint16_t wiced_bt_mesh_scene_register_nvram_id;
+uint16_t wiced_bt_mesh_scene_nvram_id_start;
+uint16_t wiced_bt_mesh_scene_nvram_id_end;
+uint16_t wiced_bt_mesh_scheduler_nvram_id_start;
+uint16_t wiced_bt_mesh_default_trans_time_nvram_id_start;
+uint16_t wiced_bt_mesh_power_level_nvram_id_start;
+uint16_t wiced_bt_mesh_power_onoff_nvram_id_start;
+uint16_t wiced_bt_mesh_light_lightness_nvram_id_start;
+uint16_t wiced_bt_mesh_light_xyl_nvram_id_start;
+uint16_t wiced_bt_mesh_light_ctl_nvram_id_start;
+uint16_t wiced_bt_mesh_light_hsl_nvram_id_start;
+uint16_t wiced_bt_mesh_light_lc_run_nvram_id_start;
+uint16_t wiced_bt_mesh_light_lc_nvram_id_start;
+
+uint8_t  wiced_bt_mesh_scene_max_num;
+uint8_t  wiced_bt_mesh_scheduler_events_max_num;
+
 // app timer
-wiced_timer_t app_timer;
+static wiced_timer_t app_timer;
 
 /******************************************************
  *               Function Definitions
@@ -448,9 +473,23 @@ void mesh_application_factory_reset(void)
     {
         wiced_bt_mesh_app_func_table.p_mesh_app_factory_reset();
     }
-    wiced_bt_mesh_core_init(NULL);
+    wiced_bt_mesh_core_deinit(mesh_nvram_access);
     node_authenticated = WICED_FALSE;
     pb_gatt_in_progress = WICED_FALSE;
+}
+
+// If uuid_len == 16 then assigns UUID to the node. It does factory reset. And it does factory reset
+void mesh_application_hard_reset(uint8_t *uuid, uint8_t uuid_len)
+{
+    wiced_result_t  result;
+    if (uuid_len == 16)
+    {
+        if (16 != mesh_nvram_access(WICED_TRUE, NVRAM_ID_LOCAL_UUID, uuid, uuid_len, &result))
+        {
+            WICED_BT_TRACE("failed to set UUID result:%x\n", result);
+        }
+    }
+    mesh_application_factory_reset();
 }
 
 void mesh_ota_firmware_upgrade_status_callback(uint8_t status)
@@ -511,8 +550,6 @@ void mesh_application_init(void)
     memcpy(init.provisioned_bda, init.non_provisioned_bda, sizeof(wiced_bt_device_address_t));
     memcpy(&init.device_uuid[0], init.non_provisioned_bda, 6);
     memset(&init.device_uuid[6], 0x0f, 16 - 6);
-    // in PTS disable proxy on demand - always advertise proxy service network if when appropriate
-    wiced_bt_mesh_core_proxy_on_demand_advert_to = 0;
     // Some PTS tests requere retrans count bigger then 1 for multicast addr. Default value is 1
     extern uint8_t wiced_bt_core_lower_transport_seg_trans_cnt_group;
     wiced_bt_core_lower_transport_seg_trans_cnt_group = 3;
@@ -532,7 +569,13 @@ void mesh_application_init(void)
             WICED_BT_TRACE("failed to save UUID result:%x UUID:\n", result);
         }
     }
-#ifdef STATIC_OOB_DATA
+#ifdef SECURE_PROVISIONING
+    // Check if we have Static Private Key programmed by factory
+    static_private_key_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_PRIVATE_KEY, static_private_key, sizeof(static_private_key));
+    if (static_private_key_len != 0)
+    {
+        WICED_BT_TRACE_ARRAY(static_private_key, static_private_key_len, "static private key:");
+    }
     // Check if we have OOB Static Data program in the factory
     static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data));
     if (static_oob_data_len != 0)
@@ -548,9 +591,6 @@ void mesh_application_init(void)
     init.provisioned_bda[0] |= 0xc0;
 #endif
     WICED_BT_TRACE_ARRAY(init.device_uuid, 16, "UUID:");
-
-    // Remove this line if MeshClient supports proxy on demand
-    wiced_bt_mesh_core_proxy_on_demand_advert_to = 0;
 
     //assign config pointer to that variable at the startup. remote_provision_server uses it
     p_wiced_bt_mesh_cfg_settings = &wiced_bt_cfg_settings;
@@ -600,16 +640,19 @@ void mesh_application_init(void)
 #endif
 #endif
 
-#ifdef STATIC_OOB_DATA
-    if (static_oob_data_len != 0)
+#ifdef SECURE_PROVISIONING
+    if (static_private_key_len != 0 || static_oob_data_len != 0)
     {
         wiced_bt_mesh_provision_capabilities_data_t provision_caps;
 
-        // This application support Static OOB Data. Register event handler with mesh_app library.
-        wiced_bt_mesh_app_provision_server_init(pb_priv_key, mesh_app_provision_message_handler);
+        // This application supports Static Private Key/Static OOB Data. Register event handler with mesh_app library.
+        if (static_private_key_len != 0)
+            wiced_bt_mesh_app_provision_server_init(static_private_key, mesh_app_provision_message_handler);
+        else
+            wiced_bt_mesh_app_provision_server_init(pb_priv_key, mesh_app_provision_message_handler);
 
-        provision_caps.pub_key_type      = 0;
-        provision_caps.static_oob_type   = 1;
+        provision_caps.pub_key_type      = static_private_key_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_PUB_KEY_TYPE_AVAILABLE : 0;
+        provision_caps.static_oob_type   = static_oob_data_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_STATIC_OOB_TYPE_AVAILABLE : 0;
         provision_caps.output_oob_action = 0;
         provision_caps.output_oob_size   = 0;
         provision_caps.input_oob_action  = 0;
@@ -618,12 +661,12 @@ void mesh_application_init(void)
         wiced_bt_mesh_app_provision_server_configure(&provision_caps);
 
         // In case application forgot to fill conifg.oob.
-        if (mesh_config.oob == 0)
+        if (static_oob_data_len != 0 && mesh_config.oob == 0)
             mesh_config.oob = (WICED_BT_MESH_CORE_OOB_BIT_OTHER | WICED_BT_MESH_CORE_OOB_BIT_NUMBER);
     }
     else
 #endif
-    // If STATIC_OOB_DATA is not specified, or static OOB data that has not been read from the static section
+    // If SECURE_PROVISIONING is not specified, or static OOB data that has not been read from the static section
     // don't register callback and try to provision with no oob data
     {
         wiced_bt_mesh_app_provision_server_init(pb_priv_key, NULL);
@@ -688,8 +731,12 @@ static void mesh_adv_report(wiced_bt_ble_scan_results_t *p_scan_result, uint8_t 
         if (wiced_bt_mesh_remote_provisioning_nonconnectable_adv_packet(p_scan_result, p_adv_data))
             return;
 #endif // if defined REMOTE_PROVISION_SERVER_SUPPORTED
+#ifdef PRIVATE_PROXY_SUPPORTED
+        if (wiced_bt_mesh_proxy_solicitation_nonconnectable_adv_packet(p_scan_result, p_adv_data))
+            return;
+#endif // if defined PRIVATE_PROXY_SUPPORTED
 
-        wiced_bt_mesh_core_adv_packet(p_scan_result->rssi, p_adv_data);
+        wiced_bt_mesh_core_adv_packet(p_scan_result->rssi, p_adv_data, p_scan_result->remote_bd_addr);
     }
 }
 
@@ -913,8 +960,6 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
          ((model_id != WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_SRV) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_DIRECTED_FORWARDING_CLNT) &&
 #ifdef MESH_DFU_SUPPORTED
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) &&
@@ -1095,6 +1140,20 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
         WICED_BT_TRACE("mesh_state_changed_cb:FRND_FRIENDSHIP: established:%d addr:%x\n", p_state->frnd.established, p_state->frnd.addr);
         break;
 
+#ifdef PTS
+    case WICED_BT_MESH_CORE_STATE_PRIVATE_BEACON:
+#ifdef HCI_CONTROL
+        mesh_app_hci_send_private_beacon(&p_state->beacon);
+#endif
+        break;
+
+    case WICED_BT_MESH_CORE_STATE_PROXY_SERVICE_ADV:
+#ifdef HCI_CONTROL
+        mesh_app_hci_send_proxy_service_adv(&p_state->proxy_service);
+#endif
+        break;
+#endif
+
     default:
 	break;
     }
@@ -1124,7 +1183,7 @@ uint8_t number_of_elements_with_model(uint16_t model_id)
     return (num_elements_with_model);
 }
 
-#ifdef STATIC_OOB_DATA
+#ifdef SECURE_PROVISIONING
 /*
  * Process event received from the OnOff Client.
  */
@@ -1192,6 +1251,10 @@ void mesh_setup_nvram_ids()
     mesh_nvm_idx_seq                                = wiced_bt_mesh_core_nvm_idx_cfg_data       - 1;
 #ifndef CYW20706A2
     wiced_bt_mesh_core_nvm_idx_fw_distributor       = mesh_nvm_idx_seq                          - 1000;
+#endif
+    // don't support Directed Forwarding on 20706
+#ifndef CYW20706A2
+    wiced_bt_mesh_core_nvm_idx_df_config            = mesh_nvm_idx_seq                          - 1000;
 #endif
 
     WICED_BT_TRACE("setup nvram ids: net_key_max_num:%d app_key_max_num:%d nvm_idx_seq:%x %x-%x cfg_data_len:%d\n", wiced_bt_mesh_core_net_key_max_num, wiced_bt_mesh_core_app_key_max_num, mesh_nvm_idx_seq, wiced_bt_mesh_core_nvm_idx_health_state, WICED_NVRAM_VSID_END, cfg_data_len);
@@ -1346,7 +1409,8 @@ wiced_bool_t mesh_application_seq_save(wiced_bt_mesh_core_state_seq_t *p_seq)
         {
             // delete probably existing records for unknown indices. It is possible because we save RPL entries on successfull message handling
             while (mesh_app_rpl_init.size < p_seq->rpl_entry_idx)
-                mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq - 1 - mesh_app_rpl_init.size++, NULL, 0, &result);
+                if (0 == mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq - 1 - mesh_app_rpl_init.size++, NULL, 0, &result)) // that if is useless - just to use return result to get rid of coverity error
+                    result = 0;
             // update RPL_INIT NVRAM data with new RPL size
             if (sizeof(mesh_app_rpl_init) != mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq, (uint8_t*)&mesh_app_rpl_init, sizeof(mesh_app_rpl_init), &result) || result != 0)
                 return WICED_FALSE;

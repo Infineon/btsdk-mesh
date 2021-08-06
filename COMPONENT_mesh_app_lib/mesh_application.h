@@ -140,6 +140,8 @@ wiced_bool_t mesh_app_node_is_provisioned(void);
 void mesh_app_hci_init(void);
 void mesh_app_timer_init(void);
 void mesh_app_hci_send_seq_changed(wiced_bt_mesh_core_state_seq_t *p_seq);
+void mesh_app_hci_send_private_beacon(wiced_bt_mesh_core_state_beacon_t* p_beacon);
+void mesh_app_hci_send_proxy_service_adv(wiced_bt_mesh_core_state_proxy_serivce_t* p_service);
 void mesh_app_dfu_init(void);
 void mesh_application_init(void);
 #ifdef WICEDX_LINUX

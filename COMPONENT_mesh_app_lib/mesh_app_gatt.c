@@ -99,7 +99,7 @@ extern void                   mesh_start_stop_scan_callback(wiced_bool_t start, 
  * provisioned, this one contains Provisioning GATT service.  After device is
  * provisioned, it has GATT Proxy service.
  */
-uint8_t gatt_db_unprovisioned[]=
+static const uint8_t gatt_db_unprovisioned[]=
 {
     // Declare mandatory GATT service
     PRIMARY_SERVICE_UUID16(MESH_HANDLE_GATT_SERVICE, UUID_SERVICE_GATT),
@@ -210,9 +210,8 @@ uint8_t gatt_db_unprovisioned[]=
 #endif
 #endif // MESH_HOMEKIT_COMBO_APP
 };
-const uint32_t gatt_db_unprovisioned_size = sizeof(gatt_db_unprovisioned);
 
-uint8_t gatt_db_provisioned[]=
+static const uint8_t gatt_db_provisioned[]=
 {
     // Declare mandatory GATT service
     PRIMARY_SERVICE_UUID16(MESH_HANDLE_GATT_SERVICE, UUID_SERVICE_GATT),
@@ -341,11 +340,10 @@ uint8_t gatt_db_provisioned[]=
             LEGATTDB_PERM_VARIABLE_LENGTH | LEGATTDB_PERM_WRITE_REQ | LEGATTDB_PERM_RELIABLE_WRITE /*| LEGATTDB_PERM_AUTH_WRITABLE */),
 
 };
-const uint32_t gatt_db_provisioned_size = sizeof(gatt_db_provisioned);
 
 typedef struct
 {
-    uint16_t handle;
+    const uint16_t handle;
     uint16_t attr_len;
     void     *p_attr;
 } attribute_t;
@@ -368,7 +366,7 @@ uint16_t conn_id = 0;
 uint16_t conn_mtu = 0; // MTU to use in wiced_bt_mesh_core_connection_status() at notifications enable
 mesh_gatt_cb_t mesh_gatt_cb;
 
-attribute_t gauAttributes[] =
+static const attribute_t gauAttributes[] =
 {
     { MESH_HANDLE_GAP_SERVICE_CHARACTERISTIC_DEV_NAME_VAL, 0, NULL },
     { MESH_HANDLE_GAP_SERVICE_CHARACTERISTIC_APPEARANCE_VAL, 0, NULL },
@@ -384,6 +382,8 @@ attribute_t gauAttributes[] =
     { HANDLE_DESCR_MESH_COMMAND_DATA_CLIENT_CONFIG, sizeof(mesh_cmd_client_config), mesh_cmd_client_config },
 #endif
 };
+
+static attribute_t * pGauAttributes = NULL;
 
 /******************************************************
  *               Function Definitions
@@ -465,12 +465,17 @@ void mesh_app_gatt_db_init(wiced_bool_t is_authenticated)
 // Find attribute description by handle
 static attribute_t * get_attribute_(uint16_t handle)
 {
+    if (pGauAttributes == NULL)
+    {
+        pGauAttributes = wiced_memory_permanent_allocate(sizeof(gauAttributes));
+        memcpy(pGauAttributes, gauAttributes, sizeof(gauAttributes));
+    }
     int i;
     for (i = 0; i < sizeof(gauAttributes) / sizeof(gauAttributes[0]); i++)
     {
-        if (gauAttributes[i].handle == handle)
+        if (pGauAttributes[i].handle == handle)
         {
-            return (&gauAttributes[i]);
+            return (&pGauAttributes[i]);
         }
     }
     WICED_BT_TRACE("get_attribute_: attr not found:%x\n", handle);
