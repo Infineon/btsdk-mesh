@@ -136,6 +136,8 @@ void mesh_app_gatt_init(void);
 void mesh_app_gatt_db_init(wiced_bool_t is_authenticated);
 void mesh_app_proxy_gatt_send_cb(uint32_t conn_id, uint32_t ref_data, const uint8_t *packet, uint32_t packet_len);
 wiced_bool_t mesh_app_gatt_is_connected(void);
+wiced_bool_t mesh_app_adv_send_callback(uint8_t instance, uint8_t transmissions, uint32_t interval, uint8_t type, uint8_t* own_bd_addr,
+    const uint8_t* adv_data, uint8_t adv_data_len, const uint8_t* scan_rsp_data, uint8_t scan_rsp_data_len);
 wiced_bool_t mesh_app_node_is_provisioned(void);
 void mesh_app_hci_init(void);
 void mesh_app_timer_init(void);

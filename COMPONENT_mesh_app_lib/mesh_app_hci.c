@@ -119,11 +119,7 @@ void mesh_app_hci_init(void)
 #if (defined(CYW20706A2) || defined(CYW20735B0) || defined(CYW20719B0) || defined(CYW43012C0))
     wiced_hal_puart_select_uart_pads(WICED_PUART_RXD, WICED_PUART_TXD, 0, 0);
 #endif
-#if defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20706A2)
-    wiced_hal_puart_set_baudrate(921600);
-#else
     wiced_hal_puart_configuration(921600, PARITY_NONE, STOP_BIT_1);
-#endif // CYW20735B1 || CYW20835B1 || CYW20706A2
 #else // _DEB_ENABLE_HCI_TRACE
     // WICED_ROUTE_DEBUG_TO_WICED_UART to send debug strings over the WICED debug interface
     wiced_set_debug_uart(WICED_ROUTE_DEBUG_TO_WICED_UART);

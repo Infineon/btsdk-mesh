@@ -184,6 +184,17 @@ wiced_bt_mesh_core_received_msg_handler_t p_proxy_status_message_handler = NULL;
 // Application has to assign config pointer to that variable at the startup
 extern wiced_bt_cfg_settings_t* p_wiced_bt_mesh_cfg_settings;
 
+#if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
+// Poll interval and poll time in the Fast Polling state which starts at the provisioning.
+// In that state the LPN uses short poll timeout 1 second(MESH_APP_FAST_POLL_TIMEOUT) during 30 seconds(MESH_APP_FAST_POLL_TIME) after provisioning.
+#define MESH_APP_FAST_POLL_TIMEOUT  1000
+#define MESH_APP_FAST_POLL_TIME     30000
+
+// The time when LPN stops the Fast Polling state.
+// Non-0 value means the node is in the Fast Polling state.
+uint64_t mesh_app_fast_polling_stop_time = 0;
+#endif
+
 /******************************************************
  *          Function Prototypes
  ******************************************************/
@@ -236,6 +247,13 @@ uint8_t static_oob_data[16];
 uint8_t static_oob_data_len = 0;
 #endif
 
+#ifdef CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+#define MESH_URI_MAX_LEN                28 //duplicate foundation.h
+// The value in static manufacturing memory should be zero terminated string
+uint8_t static_uri_data[MESH_URI_MAX_LEN];
+uint16_t static_uri_data_len;
+#endif
+
 #define STATIC_UUID
 #ifdef STATIC_UUID
 // In real product, Static OOB Data should be written in static section flash during manufacturing
@@ -277,6 +295,34 @@ uint8_t  wiced_bt_mesh_scheduler_events_max_num;
 
 // app timer
 static wiced_timer_t app_timer;
+
+static wiced_bt_mesh_app_non_conn_adv_handler_t p_non_conn_adv_handler = NULL;
+
+// 20706 has different definition for read/write nvram
+#if !defined(CYW20706A2)
+#define mesh_app_wiced_hal_write_nvram wiced_hal_write_nvram
+#define mesh_app_wiced_hal_read_nvram wiced_hal_read_nvram
+#else
+uint16_t mesh_app_wiced_hal_write_nvram(uint16_t vs_id, uint16_t data_length, uint8_t* p_data, wiced_result_t* p_status)
+{
+    return (uint16_t)wiced_hal_write_nvram((uint8_t)vs_id, (uint8_t)data_length, p_data, p_status);
+}
+uint16_t mesh_app_wiced_hal_read_nvram(uint16_t vs_id, uint16_t data_length, uint8_t* p_data, wiced_result_t* p_status)
+{
+    return (uint16_t)wiced_hal_read_nvram((uint8_t)vs_id, (uint8_t)data_length, p_data, p_status);
+}
+#endif
+
+wiced_bt_mesh_core_hal_api_t mesh_app_hal_api =
+{
+    .rand_gen_num_array = wiced_hal_rand_gen_num_array,
+    .get_pseudo_rand_number = wiced_hal_get_pseudo_rand_number,
+    .rand_gen_num = wiced_hal_rand_gen_num,
+    .wdog_reset_system = wiced_hal_wdog_reset_system,
+    .delete_nvram = wiced_hal_delete_nvram,
+    .write_nvram = mesh_app_wiced_hal_write_nvram,
+    .read_nvram = mesh_app_wiced_hal_read_nvram
+};
 
 /******************************************************
  *               Function Definitions
@@ -473,7 +519,10 @@ void mesh_application_factory_reset(void)
     {
         wiced_bt_mesh_app_func_table.p_mesh_app_factory_reset();
     }
-    wiced_bt_mesh_core_deinit(mesh_nvram_access);
+    // mesh_core_lib can't reset system. On FALSE caller has to do it.
+    if(!wiced_bt_mesh_core_deinit(mesh_nvram_access))
+        wiced_hal_wdog_reset_system();
+    wiced_hal_wdog_reset_system();
     node_authenticated = WICED_FALSE;
     pb_gatt_in_progress = WICED_FALSE;
 }
@@ -516,6 +565,8 @@ void mesh_application_init(void)
 
     WICED_BT_TRACE("## mesh_application_init free_bytes:%d ##\n", wiced_memory_get_free_bytes());
 
+    wiced_bt_mesh_core_set_hal_api(&mesh_app_hal_api);
+
 // On 20719B0 wiced_init_timer() fails if it called from APPLICATION_START.
 #ifndef WICEDX_LINUX
 #ifdef WICED_BT_TRACE_ENABLE
@@ -550,19 +601,26 @@ void mesh_application_init(void)
     memcpy(init.provisioned_bda, init.non_provisioned_bda, sizeof(wiced_bt_device_address_t));
     memcpy(&init.device_uuid[0], init.non_provisioned_bda, 6);
     memset(&init.device_uuid[6], 0x0f, 16 - 6);
-    // Some PTS tests requere retrans count bigger then 1 for multicast addr. Default value is 1
+    // Some PTS tests require retrans count bigger then 1 for multicast addr. Default value is 1
     extern uint8_t wiced_bt_core_lower_transport_seg_trans_cnt_group;
     wiced_bt_core_lower_transport_seg_trans_cnt_group = 3;
 #else
     if (mesh_nvram_access(WICED_FALSE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result) != 16)
     {
+#ifdef HARDCODED_UUID
+        // Set hardcoded UUID - it can be needed for Directed Forwarding testing of the Low Power node
+        uint8_t hardcoded_uuid[] = { HARDCODED_UUID };
+        memcpy(init.device_uuid, hardcoded_uuid, sizeof(hardcoded_uuid));
+        WICED_BT_TRACE_ARRAY(hardcoded_uuid, sizeof(hardcoded_uuid), "hardcoded_uuid:");
+#else
         // This is the first time for this app is running after the factory reset.
         // Check if UUID data have been configured in the factory
-        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, init.device_uuid, sizeof(init.device_uuid)) != sizeof(init.device_uuid))
+        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, init.device_uuid, sizeof(init.device_uuid), 0) != sizeof(init.device_uuid))
         {
             // Not programmed at factory, generate UUID
             mesh_application_gen_uuid(init.device_uuid);
         }
+#endif
         // Save UUID in the NVRAM for future use
         if (16 != mesh_nvram_access(WICED_TRUE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result))
         {
@@ -571,13 +629,13 @@ void mesh_application_init(void)
     }
 #ifdef SECURE_PROVISIONING
     // Check if we have Static Private Key programmed by factory
-    static_private_key_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_PRIVATE_KEY, static_private_key, sizeof(static_private_key));
+    static_private_key_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_PRIVATE_KEY, static_private_key, sizeof(static_private_key), 0);
     if (static_private_key_len != 0)
     {
         WICED_BT_TRACE_ARRAY(static_private_key, static_private_key_len, "static private key:");
     }
     // Check if we have OOB Static Data program in the factory
-    static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data));
+    static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data), 0);
     if (static_oob_data_len != 0)
     {
         WICED_BT_TRACE_ARRAY(static_oob_data, static_oob_data_len, "static OOB:");
@@ -598,10 +656,36 @@ void mesh_application_init(void)
 #ifdef MESH_SUPPORT_PB_GATT
     mesh_config.features |= WICED_BT_MESH_CORE_FEATURE_BIT_PB_GATT;
 #endif
+
+#ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+    mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_CERTIFICATE;
+    static_uri_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_BASE_URI, static_uri_data, sizeof(static_uri_data), 0);
+    if (static_uri_data_len != 0)
+    {
+        WICED_BT_TRACE_ARRAY(static_uri_data, static_uri_data_len, "static uri:");
+        mesh_config.uri = (const char *) static_uri_data;
+    }
+    // checking if static section of memory contains provisioning records.
+    // Reading only a small chunk at the begining to test in case of certificates.
+    if ( (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_DEVICE_CERTIFICATE, buffer, sizeof(buffer), 0) != 0) ||
+         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_BASE_URI, buffer, sizeof(buffer), 0) != 0) ||
+         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_LOCAL_NAME, buffer, sizeof(buffer), 0) != 0) ||
+         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_APPEARANCE, buffer, sizeof(buffer), 0) != 0))
+    {
+        WICED_BT_TRACE( "device stores certificate to static memory");
+        mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_RECORD;
+    }
+#endif
+#if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
+    // Reset Fast Polling state
+    mesh_app_fast_polling_stop_time = 0;
+#endif
+
     init.p_config_data = &mesh_config;
     init.callback = get_msg_handler_callback;
     init.pub_callback = mesh_publication_callback;
     init.proxy_send_callback = mesh_app_proxy_gatt_send_cb;
+    init.adv_send_callback = mesh_app_adv_send_callback;
     init.nvram_access_callback = mesh_nvram_access;
     init.fault_test_cb = mesh_fault_test;
     init.attention_cb = wiced_bt_mesh_app_func_table.p_mesh_app_attention;
@@ -727,6 +811,11 @@ static void mesh_adv_report(wiced_bt_ble_scan_results_t *p_scan_result, uint8_t 
     }
     else if (p_scan_result->ble_evt_type == BTM_BLE_EVT_NON_CONNECTABLE_ADVERTISEMENT)
     {
+        if (p_non_conn_adv_handler != NULL)
+        {
+            if ((*p_non_conn_adv_handler)(p_scan_result->rssi, p_adv_data, p_scan_result->remote_bd_addr))
+                return;
+        }
 #if REMOTE_PROVISION_SERVER_SUPPORTED
         if (wiced_bt_mesh_remote_provisioning_nonconnectable_adv_packet(p_scan_result, p_adv_data))
             return;
@@ -938,6 +1027,7 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
                 p_message_handler = (wiced_bt_mesh_core_received_msg_handler_t)mesh_config.elements[idx_elem].models[idx_model].p_message_handler;
                 if (p_message_handler == NULL)
                     continue;
+                temp_event.element_idx = idx_elem;
                 if (!p_message_handler(&temp_event, NULL, 0))
                     continue;
                 model_id = mesh_config.elements[idx_elem].models[idx_model].model_id;
@@ -960,14 +1050,6 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
          ((model_id != WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
-#ifdef MESH_DFU_SUPPORTED
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_SRV) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_UPDATE_CLNT) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_SRV) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_FW_DISTRIBUTION_CLNT) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_SRV) &&
-          (model_id != WICED_BT_MESH_CORE_MODEL_ID_BLOB_TRANSFER_CLNT) &&
-#endif
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_CLNT))))
     {
         p_message_handler = p_app_model_message_handler;
@@ -1079,6 +1161,20 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
             break;
 
         node_authenticated = p_state->node_state.provisioned;
+#if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
+        if (node_authenticated)
+        {
+            // On end of provisioning start Fast Polling state by setting the stop time to the 30 seconds(MESH_APP_FAST_POLL_TIME) after current time.
+            mesh_app_fast_polling_stop_time = wiced_bt_mesh_core_get_tick_count() + MESH_APP_FAST_POLL_TIME;
+            WICED_BT_TRACE("Start Fast Polling state. fast_polling_stop_time:%d\n", (uint32_t)mesh_app_fast_polling_stop_time);
+        }
+        else
+        {
+            // On switching to unprovisioned state reset Fast Polling state
+            mesh_app_fast_polling_stop_time = 0;
+        }
+#endif
+
 #ifndef MESH_HOMEKIT_COMBO_APP
         mesh_app_gatt_db_init(node_authenticated);
 #else // MESH_HOMEKIT_COMBO_APP
@@ -1125,7 +1221,36 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
         break;
 
     case WICED_BT_MESH_CORE_STATE_LPN_SLEEP:
+#if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
+    {
+        uint64_t curr_time = wiced_bt_mesh_core_get_tick_count();
+        WICED_BT_TRACE("mesh_state_changed_cb:LPN_SLEEP: timeout:%d fast_polling_stop_time:%d curr_time:%d\n", p_state->lpn_sleep, (uint32_t)mesh_app_fast_polling_stop_time, (uint32_t)curr_time);
+        // If we are in the Fast Polling state
+        if (mesh_app_fast_polling_stop_time != 0)
+        {
+            // If Fast Polling state isn't expired yet
+            if (mesh_app_fast_polling_stop_time > curr_time)
+            {
+                // If at least one access message is received since previous poll timeout (sleep) then extend Fast Polling state on 30 seconds(MESH_APP_FAST_POLL_TIME)
+                wiced_bt_mesh_core_transport_statistics_t stats;
+                wiced_bt_mesh_core_transport_statistics_get(&stats);
+                wiced_bt_mesh_core_transport_statistics_reset();
+                if (stats.received_access_layer_msg_cnt)
+                    mesh_app_fast_polling_stop_time = curr_time + MESH_APP_FAST_POLL_TIME;
+                // Keep 1 sec(MESH_APP_FAST_POLL_TIMEOUT) poll timeout in the Fast Polling state unless requested sleep time is less then 1 sec.
+                if (p_state->lpn_sleep > MESH_APP_FAST_POLL_TIMEOUT)
+                    p_state->lpn_sleep = MESH_APP_FAST_POLL_TIMEOUT;
+
+                WICED_BT_TRACE("Fast Polling received_access_layer_msg_cnt\n", stats.received_access_layer_msg_cnt);
+                break;
+            }
+            // Fast Polling state is expired. Reset Fast Polling state.
+            mesh_app_fast_polling_stop_time = 0;
+        }
+    }
+#else
         WICED_BT_TRACE("mesh_state_changed_cb:LPN_SLEEP: timeout:%d\n", p_state->lpn_sleep);
+#endif
         if (wiced_is_timer_in_use(&app_timer))
         {
             wiced_stop_timer(&app_timer);
@@ -1235,7 +1360,7 @@ void mesh_setup_nvram_ids()
     wiced_bt_mesh_light_lightness_nvram_id_start    = wiced_bt_mesh_light_xyl_nvram_id_start        - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_LIGHT_LIGHTNESS_SRV);
     wiced_bt_mesh_power_level_nvram_id_start        = wiced_bt_mesh_light_lightness_nvram_id_start  - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_GENERIC_POWER_LEVEL_SRV);
     wiced_bt_mesh_power_onoff_nvram_id_start        = wiced_bt_mesh_power_level_nvram_id_start      - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_GENERIC_POWER_ONOFF_SRV);
-    wiced_bt_mesh_default_trans_time_nvram_id_start = wiced_bt_mesh_power_onoff_nvram_id_start      - 1;
+    wiced_bt_mesh_default_trans_time_nvram_id_start = wiced_bt_mesh_power_onoff_nvram_id_start      - number_of_elements_with_model(WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_SRV);;
     wiced_bt_mesh_scheduler_nvram_id_start          = wiced_bt_mesh_default_trans_time_nvram_id_start - wiced_bt_mesh_scheduler_events_max_num;
     wiced_bt_mesh_scene_nvram_id_end                = wiced_bt_mesh_scheduler_nvram_id_start        - 1;
     wiced_bt_mesh_scene_nvram_id_start              = wiced_bt_mesh_scene_nvram_id_end              - wiced_bt_mesh_scene_max_num;
@@ -1429,6 +1554,15 @@ uint16_t mesh_application_get_nvram_id_app_start(void)
     return NVRAM_ID_APP_START;
 }
 
+/**
+ *@brief Register an application dependent non-connectable adv packet handler
+ * Register an application dependent non-connectable adv packet handler
+**/
+void mesh_application_reg_non_conn_adv_handler(wiced_bt_mesh_app_non_conn_adv_handler_t handler)
+{
+    p_non_conn_adv_handler = handler;
+}
+
 // converts 6 bits of bin value to base 64 character (A-Z,a-z,0-9,+,/)
 uint8_t wiced_bt_mesh_base64_encode_6bits(uint8_t bin)
 {
@@ -1448,17 +1582,8 @@ void mesh_app_timer_init(void)
 {
     /* Starting the app timer  */
     memset(&app_timer, 0, sizeof(wiced_timer_t));
-    if (wiced_init_timer(&app_timer, mesh_app_timer, 0, WICED_SECONDS_PERIODIC_TIMER) == WICED_SUCCESS)
-    {
-        if (wiced_start_timer(&app_timer, MESH_APP_TIMEOUT_IN_SECONDS) != WICED_SUCCESS)
-        {
-            WICED_BT_TRACE("APP START Timer FAILED!!\n");
-        }
-    }
-    else
-    {
-        WICED_BT_TRACE("APP INIT Timer FAILED!!\n");
-    }
+    wiced_init_timer(&app_timer, mesh_app_timer, 0, WICED_SECONDS_PERIODIC_TIMER);
+    wiced_start_timer(&app_timer, MESH_APP_TIMEOUT_IN_SECONDS);
 }
 
 #ifdef _DEB_PRINT_BUF_USE

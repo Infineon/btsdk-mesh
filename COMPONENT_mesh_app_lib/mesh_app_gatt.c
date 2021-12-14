@@ -44,6 +44,7 @@
 #include "wiced_bt_ble.h"
 #include "wiced_bt_cfg.h"
 #include "wiced_memory.h"
+#include "wiced_bt_event.h"
 #include "wiced_bt_ota_firmware_upgrade.h"
 #include "wiced_hal_puart.h"
 #include "wiced_hal_wdog.h"
@@ -365,6 +366,13 @@ uint8_t mesh_cmd_client_config[2]   = { BIT16_TO_8(GATT_CLIENT_CONFIG_NOTIFICATI
 uint16_t conn_id = 0;
 uint16_t conn_mtu = 0; // MTU to use in wiced_bt_mesh_core_connection_status() at notifications enable
 mesh_gatt_cb_t mesh_gatt_cb;
+wiced_bool_t gatt_congested = WICED_FALSE;
+typedef struct _queued_notification
+{
+    struct _queued_notification* p_next;
+    wiced_bt_gatt_value_t packet;
+} queued_notification_t;
+queued_notification_t* p_queued_first = NULL;
 
 static const attribute_t gauAttributes[] =
 {
@@ -596,9 +604,47 @@ wiced_bt_gatt_status_t mesh_gatts_req_cb(wiced_bt_gatt_attribute_request_t *p_da
         break;
 
     default:
-	break;
+        break;
     }
     return result;
+}
+
+int send_queued_notifications(void *arg)
+{
+    uint16_t conn_id = (uint16_t)(uint32_t)arg;
+    while (!gatt_congested && (p_queued_first != NULL))
+    {
+        queued_notification_t* p_next = p_queued_first->p_next;
+        WICED_BT_TRACE("send queued conn_id:%d len:%d\n", conn_id, p_queued_first->packet.len);
+        if (p_queued_first->packet.handle == 0)
+        {
+            wiced_bt_gatt_send_notification(conn_id, HANDLE_CHAR_MESH_PROXY_DATA_OUT_VALUE, p_queued_first->packet.len, p_queued_first->packet.value);
+        }
+        else
+        {
+            wiced_bt_gatt_send_write(conn_id, GATT_WRITE_NO_RSP, &p_queued_first->packet);
+        }
+        wiced_bt_free_buffer(p_queued_first);
+        p_queued_first = p_next;
+    }
+    return 1;
+}
+
+/*
+ * Callback indicating change in the congestion status
+ */
+wiced_bt_gatt_status_t mesh_gatts_congestion_cb(wiced_bt_gatt_congestion_event_t* p_congest_evt)
+{
+    if (p_congest_evt->congested)
+    {
+        gatt_congested = WICED_TRUE;
+    }
+    else
+    {
+        gatt_congested = WICED_FALSE;
+        wiced_app_event_serialize(send_queued_notifications, (void *)(uint32_t)p_congest_evt->conn_id);
+    }
+    return WICED_BT_GATT_SUCCESS;
 }
 
 /*
@@ -644,6 +690,15 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
             {
                 conn_id = 0;
                 conn_mtu = 0;
+
+                gatt_congested = WICED_FALSE;
+                while (p_queued_first != NULL)
+                {
+                    queued_notification_t* p_temp = p_queued_first->p_next;
+                    wiced_bt_free_buffer(p_queued_first);
+                    p_queued_first = p_temp;
+                }
+
                 // On disconnect ref_data is disconnection reason.
                 wiced_bt_mesh_core_connection_status(0, WICED_FALSE, p_data->connection_status.reason, 20);
             }
@@ -673,6 +728,10 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
         result = mesh_gatts_req_cb(&p_data->attribute_request);
         break;
 
+    case GATT_CONGESTION_EVT:
+        result = mesh_gatts_congestion_cb(&p_data->congestion);
+        break;
+
     default:
 #if defined REMOTE_PROVISION_SERVER_SUPPORTED && defined REMOTE_PROVISION_OVER_GATT_SUPPORTED
         remote_provision_gatt_client_event(event, p_data);
@@ -680,7 +739,7 @@ wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_g
 #if defined GATT_PROXY_CLIENT_SUPPORTED
         mesh_gatt_client_event(event, p_data);
 #endif
-	break;
+        break;
     }
     return result;
 }
@@ -871,28 +930,78 @@ static wiced_bt_gatt_status_t mesh_write_exec_handler(uint16_t conn_id)
 // Otherwise, the device is a GATT server and should use GATT Notification
 void mesh_app_proxy_gatt_send_cb(uint32_t conn_id, uint32_t ref_data, const uint8_t *packet, uint32_t packet_len)
 {
-    uint16_t               gatt_char_handle = (uint16_t)ref_data;
+    uint16_t gatt_char_handle = (uint16_t)ref_data;
+    queued_notification_t* p_temp;
 
     //WICED_BT_TRACE("proxy_gatt_send_cb: conn_id:%x packet: \n", conn_id);
     //WICED_BT_TRACE_ARRAY((char*)packet, packet_len, "");
-    if (ref_data)
+    // if ref_data is not 0, it is a handle to be used in the Write, if ref_data is 0, it is a notification.
+    if (gatt_char_handle)
     {
-        wiced_bt_gatt_value_t *p_value = (wiced_bt_gatt_value_t *)wiced_bt_get_buffer(packet_len + sizeof(wiced_bt_gatt_value_t) - 1);
-        if (p_value)
+        queued_notification_t* p_queued_buf = (queued_notification_t*)wiced_bt_get_buffer(packet_len + sizeof(queued_notification_t) - 1);
+        if (p_queued_buf == NULL)
         {
-            p_value->handle = (uint16_t)ref_data;
-            p_value->offset = 0;
-            p_value->len = packet_len;
-            p_value->auth_req = 0;
-            memcpy(p_value->value, packet, packet_len);
-
-            wiced_bt_gatt_send_write(conn_id, GATT_WRITE_NO_RSP, p_value);
-            wiced_bt_free_buffer(p_value);
+            WICED_BT_TRACE("proxy_gatt_send_cb: failed no memory\n");
+            return;
+        }
+        p_queued_buf->p_next = NULL;
+        p_queued_buf->packet.handle = gatt_char_handle;
+        p_queued_buf->packet.offset = 0;
+        p_queued_buf->packet.len = packet_len;
+        p_queued_buf->packet.auth_req = 0;
+        memcpy(p_queued_buf->packet.value, (uint8_t*)packet, packet_len);
+        if (!gatt_congested)
+        {
+            wiced_bt_gatt_send_write(conn_id, GATT_WRITE_NO_RSP, &p_queued_buf->packet);
+            wiced_bt_free_buffer(p_queued_buf);
+        }
+        else
+        {
+            if (p_queued_first == NULL)
+            {
+                p_queued_first = p_queued_buf;
+            }
+            else
+            {
+                for (p_temp = p_queued_first; p_temp->p_next != NULL; p_temp = p_temp->p_next);
+                p_temp->p_next = p_queued_buf;
+            }
+            WICED_BT_TRACE("enqueue conn_id:%d len:%d\n", conn_id, packet_len);
         }
     }
     else if (mesh_proxy_client_config[0] & GATT_CLIENT_CONFIG_NOTIFICATION)
     {
-        wiced_bt_gatt_send_notification(conn_id, HANDLE_CHAR_MESH_PROXY_DATA_OUT_VALUE, packet_len, (uint8_t*)packet);
+        if (!gatt_congested)
+        {
+            wiced_bt_gatt_send_notification(conn_id, HANDLE_CHAR_MESH_PROXY_DATA_OUT_VALUE, packet_len, (uint8_t*)packet);
+        }
+        else
+        {
+            queued_notification_t* p_queued_buf = (queued_notification_t*)wiced_bt_get_buffer(packet_len + sizeof(queued_notification_t) - 1);
+            if (p_queued_buf == NULL)
+            {
+                WICED_BT_TRACE("proxy_gatt_send_cb: conn_id:%x congested failed\n", conn_id);
+            }
+            else
+            {
+                p_queued_buf->p_next = NULL;
+                p_queued_buf->packet.handle = gatt_char_handle;
+                p_queued_buf->packet.offset = 0;
+                p_queued_buf->packet.len = packet_len;
+                p_queued_buf->packet.auth_req = 0;
+                memcpy(p_queued_buf->packet.value, (uint8_t*)packet, packet_len);
+                if (p_queued_first == NULL)
+                {
+                    p_queued_first = p_queued_buf;
+                }
+                else
+                {
+                    for (p_temp = p_queued_first; p_temp->p_next != NULL; p_temp = p_temp->p_next);
+                    p_temp->p_next = p_queued_buf;
+                }
+                WICED_BT_TRACE("enqueue conn_id:%d len:%d\n", conn_id, packet_len);
+            }
+        }
         // WICED_BT_TRACE("proxy_gatt_send_cb: conn_id:%x res:%d\n", conn_id, res);
     }
     else
