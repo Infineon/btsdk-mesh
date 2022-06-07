@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -65,9 +65,9 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .page_scan_window                = WICED_BT_CFG_DEFAULT_PAGE_SCAN_WINDOW                     // Page scan window (0 to use default)
     },
 
-    .ble_scan_cfg =                                                                                  // BLE scan settings
+    .ble_scan_cfg =                                                                                  // LE scan settings
     {
-        .scan_mode                       = BTM_BLE_SCAN_MODE_PASSIVE,                                // BLE scan mode (BTM_BLE_SCAN_MODE_PASSIVE, BTM_BLE_SCAN_MODE_ACTIVE, or BTM_BLE_SCAN_MODE_NONE)
+        .scan_mode                       = BTM_BLE_SCAN_MODE_PASSIVE,                                // LE scan mode (BTM_BLE_SCAN_MODE_PASSIVE, BTM_BLE_SCAN_MODE_ACTIVE, or BTM_BLE_SCAN_MODE_NONE)
 
         .high_duty_scan_interval         = 96,                                                       // High duty scan interval
         .high_duty_scan_window           = 96,                                                       // High duty scan window
@@ -93,7 +93,7 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .conn_supervision_timeout        = WICED_BT_CFG_DEFAULT_CONN_SUPERVISION_TIMEOUT              // Connection link supervsion timeout
     },
 
-    /* BLE advertisement settings */
+    /* LE advertisement settings */
     {
         .channel_map                     = BTM_BLE_ADVERT_CHNL_37 |                                  // Advertising channel map (mask of BTM_BLE_ADVERT_CHNL_37, BTM_BLE_ADVERT_CHNL_38, BTM_BLE_ADVERT_CHNL_39)
                                            BTM_BLE_ADVERT_CHNL_38 |

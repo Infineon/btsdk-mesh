@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -648,7 +648,7 @@ wiced_bt_gatt_status_t mesh_gatts_congestion_cb(wiced_bt_gatt_congestion_event_t
 }
 
 /*
-* Callback for various GATT events.  As this application performs only as a GATT server, some of the events are ommitted.
+* Callback for various GATT events.  As this application performs only as a GATT server, some of the events are omitted.
 */
 wiced_bt_gatt_status_t mesh_gatts_callback(wiced_bt_gatt_evt_t event, wiced_bt_gatt_event_data_t *p_data)
 {
@@ -748,7 +748,7 @@ wiced_bool_t mesh_app_gatt_is_connected(void)
 {
     return conn_id != 0;
 }
-// Handle a command packet received from the BLE host.
+// Handle a command packet received from the LE host.
 static wiced_bt_gatt_status_t mesh_write_handler(uint16_t conn_id, wiced_bt_gatt_write_t * p_data)
 {
     wiced_bt_gatt_status_t result    = WICED_BT_GATT_SUCCESS;

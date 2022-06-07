@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -119,7 +119,11 @@ void mesh_app_hci_init(void)
 #if (defined(CYW20706A2) || defined(CYW20735B0) || defined(CYW20719B0) || defined(CYW43012C0))
     wiced_hal_puart_select_uart_pads(WICED_PUART_RXD, WICED_PUART_TXD, 0, 0);
 #endif
+#ifdef PUART_BAUDRATE
+    wiced_hal_puart_configuration(PUART_BAUDRATE, PARITY_NONE, STOP_BIT_1);
+#else
     wiced_hal_puart_configuration(921600, PARITY_NONE, STOP_BIT_1);
+#endif
 #else // _DEB_ENABLE_HCI_TRACE
     // WICED_ROUTE_DEBUG_TO_WICED_UART to send debug strings over the WICED debug interface
     wiced_set_debug_uart(WICED_ROUTE_DEBUG_TO_WICED_UART);
@@ -176,6 +180,9 @@ wiced_result_t mesh_transport_send_data(uint16_t opcode, uint8_t *p_trans_buf, u
     if (result != WICED_BT_SUCCESS)
     {
         WICED_BT_TRACE("transport send buffer:%d\n", result);
+#if !defined(CYW20706A2)
+        wiced_transport_free_buffer(p_trans_buf);
+#endif
     }
     return result;
 }
@@ -254,6 +261,7 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
                 wiced_hal_wdog_reset_system();
             }
             else if (!wiced_bt_mesh_core_test_mode_signal(opcode, p_data, payload_len))
+            {
 #else
             if ((opcode == HCI_CONTROL_MESH_COMMAND_CORE_SET_SEQ) ||
                 (opcode == HCI_CONTROL_MESH_COMMAND_CORE_DEL_SEQ))
@@ -269,23 +277,25 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
                 wiced_bt_mesh_models_set_trace_level(p_data[0]);
             }
             else
-#endif
-            if (opcode == HCI_CONTROL_MESH_COMMAND_HARD_RESET)
             {
-                mesh_application_hard_reset(p_data, payload_len);
-            }
-            else
+#endif
+                if (opcode == HCI_CONTROL_MESH_COMMAND_HARD_RESET)
+                {
+                    mesh_application_hard_reset(p_data, payload_len);
+                }
+                else
 #ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
 #if defined HCI_CONTROL
-            if (opcode == HCI_CONTROL_MESH_COMMAND_DF_STATS_GET)
-                mesh_df_stats_hci_event_send();
-            else
+                if (opcode == HCI_CONTROL_MESH_COMMAND_DF_STATS_GET)
+                    mesh_df_stats_hci_event_send();
+                else
 #endif
 #endif
-            {
-                if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
                 {
-                    wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd(opcode, p_data, payload_len);
+                    if (wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd)
+                    {
+                        wiced_bt_mesh_app_func_table.p_mesh_app_proc_rx_cmd(opcode, p_data, payload_len);
+                    }
                 }
             }
         }
@@ -295,7 +305,7 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
 }
 
 /*
- * This function can be used to process WICED HCI header common all WICED HCI commands and create corresponing mesh event
+ * This function can be used to process WICED HCI header common all WICED HCI commands and create correspondng mesh event
  */
 wiced_bt_mesh_event_t *wiced_bt_mesh_create_event_from_wiced_hci(uint16_t opcode, uint16_t company_id, uint16_t model_id, uint8_t **p_data, uint32_t *len)
 {
@@ -617,7 +627,7 @@ void mesh_df_stats_hci_event_send(void)
         UINT16_TO_STREAM(p, stats.sent_df_access_msg_cnt);
         UINT16_TO_STREAM(p, stats.received_df_access_msg_cnt);
         result = mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_DF_STATS_STATUS, (uint8_t*)p_hci_event, (uint16_t)(p - (uint8_t*)p_hci_event));
-        WICED_BT_TRACE("sent df stats: result:%d access sent/resceived:%d/%d sent/received%d/%d relayed df_to_df/df_to_flood/flood_to_df/flood_to_flood:%d/%d/%d/%d\n",
+        WICED_BT_TRACE("sent df stats: result:%d access sent/received:%d/%d sent/received%d/%d relayed df_to_df/df_to_flood/flood_to_df/flood_to_flood:%d/%d/%d/%d\n",
             result, stats.sent_df_access_msg_cnt, stats.received_df_access_msg_cnt,
             stats.sent_df_msg_cnt, stats.received_df_msg_cnt, stats.relayed_df_to_df_msg_cnt,
             stats.relayed_df_to_flood_msg_cnt, stats.relayed_flood_to_df_msg_cnt, stats.relayed_flood_to_flood_msg_cnt);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -133,7 +133,7 @@ extern wiced_platform_button_config_t platform_button[];
 // if defined then prints mesh stats every _DEB_PRINT_MESH_STATS seconds
 //#define _DEB_PRINT_MESH_STATS 30
 
-// if defined then dump wiced bt buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
+// if defined then dump AIROC Bluetooth buffer statistics on every _DEB_PRINT_BUF_USE seconds to monitor buffer usage
 //#define _DEB_PRINT_BUF_USE  5
 
 
@@ -247,13 +247,6 @@ uint8_t static_oob_data[16];
 uint8_t static_oob_data_len = 0;
 #endif
 
-#ifdef CERTIFICATE_BASED_PROVISIONING_SUPPORTED
-#define MESH_URI_MAX_LEN                28 //duplicate foundation.h
-// The value in static manufacturing memory should be zero terminated string
-uint8_t static_uri_data[MESH_URI_MAX_LEN];
-uint16_t static_uri_data_len;
-#endif
-
 #define STATIC_UUID
 #ifdef STATIC_UUID
 // In real product, Static OOB Data should be written in static section flash during manufacturing
@@ -329,9 +322,9 @@ wiced_bt_mesh_core_hal_api_t mesh_app_hal_api =
  ******************************************************/
 
 /*
-*  Entry point to the application. Set device configuration and start BT
+*  Entry point to the application. Set device configuration and start Bluetooth
 *  stack initialization.  The actual application initialization will happen
-*  when stack reports that BT device is ready.
+*  when stack reports that Bluetooth device is ready.
 */
 #ifndef MESH_HOMEKIT_COMBO_APP
 #if (defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) ||  defined(CYW20706A2))
@@ -404,7 +397,7 @@ void mesh_delay_start_init(void)
 #endif
 
 /*
-* bt/ble link management callback
+* Bluetooth Classic/LE link management callback
 */
 wiced_result_t mesh_management_cback(wiced_bt_management_evt_t event, wiced_bt_management_evt_data_t *p_event_data)
 {
@@ -559,10 +552,13 @@ void mesh_ota_firmware_upgrade_status_callback(uint8_t status)
 void mesh_application_init(void)
 {
     wiced_result_t            result;
-    uint8_t                   buffer[(6 * 2) + 16];
+    uint8_t                   buffer[(6 * 2) + 16 + 1]; /* MESH_URI_MAX_LEN + 1 is a URI provisioning record with terminating /0 byte */
     wiced_bt_mesh_core_init_t init = { 0 };
     uint16_t                  nvm_idx_cfg_data_before_init;
-
+#ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+    BOOL8                    av_uuid = FALSE;
+    BOOL8                    av_private_key = FALSE;
+#endif
     WICED_BT_TRACE("## mesh_application_init free_bytes:%d ##\n", wiced_memory_get_free_bytes());
 
     wiced_bt_mesh_core_set_hal_api(&mesh_app_hal_api);
@@ -615,11 +611,18 @@ void mesh_application_init(void)
 #else
         // This is the first time for this app is running after the factory reset.
         // Check if UUID data have been configured in the factory
-        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, init.device_uuid, sizeof(init.device_uuid), 0) != sizeof(init.device_uuid))
+        uint16_t record_size;
+        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, init.device_uuid, sizeof(init.device_uuid), 0, &record_size) != sizeof(init.device_uuid))
         {
             // Not programmed at factory, generate UUID
             mesh_application_gen_uuid(init.device_uuid);
         }
+#ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+        else
+        {
+            av_uuid = TRUE; //only if it was not randomly generated!
+        }
+#endif
 #endif
         // Save UUID in the NVRAM for future use
         if (16 != mesh_nvram_access(WICED_TRUE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result))
@@ -627,21 +630,42 @@ void mesh_application_init(void)
             WICED_BT_TRACE("failed to save UUID result:%x UUID:\n", result);
         }
     }
-#ifdef SECURE_PROVISIONING
-    // Check if we have Static Private Key programmed by factory
-    static_private_key_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_PRIVATE_KEY, static_private_key, sizeof(static_private_key), 0);
-    if (static_private_key_len != 0)
+#ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+    else
     {
-        WICED_BT_TRACE_ARRAY(static_private_key, static_private_key_len, "static private key:");
-    }
-    // Check if we have OOB Static Data program in the factory
-    static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data), 0);
-    if (static_oob_data_len != 0)
-    {
-        WICED_BT_TRACE_ARRAY(static_oob_data, static_oob_data_len, "static OOB:");
+        /* in case if UUID is  present in static memory, set valid flag for choice to support certificate in OOB */
+        uint16_t record_size;
+        if (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_UUID, buffer, sizeof(init.device_uuid), 0, &record_size) == sizeof(init.device_uuid))
+        {
+            /* if NVRAM contains the same information as factory configuration */
+            if (memcmp(buffer, init.device_uuid, sizeof(init.device_uuid)) == 0)
+            {
+                av_uuid = TRUE;
+            }
+        }
     }
 #endif
-    // First 6 bytes and last 6 are random. Use them for BT addresses
+#if defined(SECURE_PROVISIONING) || defined(CERTIFICATE_BASED_PROVISIONING_SUPPORTED)
+    // Check if we have Static Private Key programmed at the factory
+    {
+        uint16_t record_size;
+        static_private_key_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_PRIVATE_KEY, static_private_key, sizeof(static_private_key), 0, &record_size);
+        if (static_private_key_len != 0)
+        {
+            WICED_BT_TRACE_ARRAY(static_private_key, static_private_key_len, "static private key:");
+#ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
+            av_private_key = TRUE;
+#endif
+        }
+        // Check if we have OOB Static Data programmed at the factory
+        static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data), 0, &record_size);
+        if (static_oob_data_len != 0)
+        {
+            WICED_BT_TRACE_ARRAY(static_oob_data, static_oob_data_len, "static OOB:");
+        }
+#endif
+    }
+    // First 6 bytes and last 6 are random. Use them for Bluetooth addresses
     memcpy(init.non_provisioned_bda, init.device_uuid, 6);
     memcpy(init.provisioned_bda, &init.device_uuid[10], 6);
     /* Valid static random address should have 2 most significant bits set to 1 */
@@ -656,25 +680,25 @@ void mesh_application_init(void)
 #ifdef MESH_SUPPORT_PB_GATT
     mesh_config.features |= WICED_BT_MESH_CORE_FEATURE_BIT_PB_GATT;
 #endif
-
 #ifdef  CERTIFICATE_BASED_PROVISIONING_SUPPORTED
-    mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_CERTIFICATE;
-    static_uri_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_BASE_URI, static_uri_data, sizeof(static_uri_data), 0);
-    if (static_uri_data_len != 0)
+    /* Certificate based provisioning works only when UUID and private key are available in static memory */
+    /* The reason for it - certificate is created with known UUID and public key that is reciprocal of private key */
+    uint16_t record_size = 0;
+    if ((av_private_key == TRUE) && (av_uuid == TRUE))
     {
-        WICED_BT_TRACE_ARRAY(static_uri_data, static_uri_data_len, "static uri:");
-        mesh_config.uri = (const char *) static_uri_data;
+        mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_CERTIFICATE;
+        /*
+         * checking if static section of memory contains provisioning records.
+         * Reading only one byte at the begining to test in case of certificate or URI
+         */
+        if ((wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_DEVICE_CERTIFICATE, buffer, 1, 0, &record_size) != 0)
+        || (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_BASE_URI, buffer, 1, 0, &record_size) != 0))
+        {
+            WICED_BT_TRACE("device has certificate or URI as provisioning record in static memory\n");
+            mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_RECORD;
+        }
     }
-    // checking if static section of memory contains provisioning records.
-    // Reading only a small chunk at the begining to test in case of certificates.
-    if ( (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_DEVICE_CERTIFICATE, buffer, sizeof(buffer), 0) != 0) ||
-         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_BASE_URI, buffer, sizeof(buffer), 0) != 0) ||
-         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_LOCAL_NAME, buffer, sizeof(buffer), 0) != 0) ||
-         (wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_APPEARANCE, buffer, sizeof(buffer), 0) != 0))
-    {
-        WICED_BT_TRACE( "device stores certificate to static memory");
-        mesh_config.oob |= WICED_BT_MESH_CORE_OOB_BIT_RECORD;
-    }
+    WICED_BT_TRACE("## mesh_application_init [oob]=:%d ##\n", mesh_config.oob);
 #endif
 #if defined(LOW_POWER_NODE) && (LOW_POWER_NODE == 1)
     // Reset Fast Polling state
@@ -697,6 +721,7 @@ void mesh_application_init(void)
     if (result != WICED_BT_SUCCESS && result != WICED_BT_PENDING)
     {
         WICED_BT_TRACE("mesh_application_init: wiced_bt_mesh_core_init failed. result=%x\n", result);
+        mesh_application_factory_reset();
         return;
     }
     node_authenticated = (result == WICED_BT_SUCCESS) ? WICED_TRUE : WICED_FALSE;
@@ -724,10 +749,12 @@ void mesh_application_init(void)
 #endif
 #endif
 
-#ifdef SECURE_PROVISIONING
+#if defined (SECURE_PROVISIONING) || defined ( CERTIFICATE_BASED_PROVISIONING_SUPPORTED)
     if (static_private_key_len != 0 || static_oob_data_len != 0)
     {
         wiced_bt_mesh_provision_capabilities_data_t provision_caps;
+
+        memset(&provision_caps, 0, sizeof(provision_caps));
 
         // This application supports Static Private Key/Static OOB Data. Register event handler with mesh_app library.
         if (static_private_key_len != 0)
@@ -735,18 +762,23 @@ void mesh_application_init(void)
         else
             wiced_bt_mesh_app_provision_server_init(pb_priv_key, mesh_app_provision_message_handler);
 
+        /* Presense of the private key in the static memory isn't good indication that public key is available as OOB */
+        /* Using this only as circumstantial evidence. Could be improved upon */
         provision_caps.pub_key_type      = static_private_key_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_PUB_KEY_TYPE_AVAILABLE : 0;
         provision_caps.static_oob_type   = static_oob_data_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_STATIC_OOB_TYPE_AVAILABLE : 0;
         provision_caps.output_oob_action = 0;
         provision_caps.output_oob_size   = 0;
         provision_caps.input_oob_action  = 0;
         provision_caps.input_oob_size    = 0;
+        memset(provision_caps.static_oob, 0, 16*sizeof(uint8_t));
 
         wiced_bt_mesh_app_provision_server_configure(&provision_caps);
 
-        // In case application forgot to fill conifg.oob.
+        // In case application forgot to fill config.oob.
         if (static_oob_data_len != 0 && mesh_config.oob == 0)
+        {
             mesh_config.oob = (WICED_BT_MESH_CORE_OOB_BIT_OTHER | WICED_BT_MESH_CORE_OOB_BIT_NUMBER);
+        }
     }
     else
 #endif
@@ -1121,6 +1153,11 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
         break;
 
     case WICED_BT_MESH_CORE_STATE_TYPE_SEQ:
+#ifdef DONT_SAVE_RPL
+        // If it is not own SEQ then drop that callback. It will make RPL empty on restart.
+        if (p_state->seq.addr != 0)
+            break;
+#endif
         // save own SEQ or RPL entry. On error do factory reset
         if (!mesh_application_seq_save(&p_state->seq))
         {
@@ -1308,7 +1345,7 @@ uint8_t number_of_elements_with_model(uint16_t model_id)
     return (num_elements_with_model);
 }
 
-#ifdef SECURE_PROVISIONING
+#if defined(SECURE_PROVISIONING) || defined(CERTIFICATE_BASED_PROVISIONING_SUPPORTED)
 /*
  * Process event received from the OnOff Client.
  */
@@ -1327,6 +1364,8 @@ void mesh_app_provision_message_handler(uint16_t event, void *p_data)
     case WICED_BT_MESH_PROVISION_GET_OOB_DATA:
         mesh_app_process_oob_get((wiced_bt_mesh_provision_device_oob_request_data_t *)p_data);
         break;
+
+
 
     default:
         WICED_BT_TRACE("unknown\n");
@@ -1587,7 +1626,7 @@ void mesh_app_timer_init(void)
 }
 
 #ifdef _DEB_PRINT_BUF_USE
-// dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage
+// dump AIROC Bluetooth buffer statistics on every 10 seconds to monitor buffer usage
 void deb_print_buf_use()
 {
     wiced_bt_buffer_statistics_t buff_stat[4];
@@ -1637,7 +1676,7 @@ void mesh_app_timer(uint32_t arg)
     app_timer_count++;
 
 #ifdef _DEB_PRINT_BUF_USE
-    /* dump wiced bt buffer statistics on every 10 seconds to monitor buffer usage */
+    /* dump AIROC Bluetooth buffer statistics on every 10 seconds to monitor buffer usage */
     if (!(app_timer_count % _DEB_PRINT_BUF_USE))
     {
         deb_print_buf_use();

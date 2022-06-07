@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -43,6 +43,7 @@
 #include "wiced_bt_ble.h"
 #include "wiced_bt_gatt.h"
 #include "wiced_bt_cfg.h"
+#include "wiced_bt_factory_app_config.h"
 #include "wiced_hal_gpio.h"
 #include "wiced_bt_uuid.h"
 #include "wiced_bt_mesh_provision.h"
@@ -73,6 +74,8 @@ static void            mesh_app_provision_end(uint32_t conn_id, uint16_t addr, u
 static wiced_bool_t    mesh_app_provision_get_oob(uint32_t conn_id, uint8_t type, uint8_t size, uint8_t action);
 static wiced_bool_t    mesh_app_provision_get_capabilities(uint32_t conn_id);
 static void            mesh_app_provision_gatt_send_cb(uint16_t conn_id, const uint8_t *packet, uint32_t packet_len);
+static uint16_t        mesh_app_provision_records_get(uint16_t *buffer);
+static uint16_t        mesh_app_provision_record_request(uint16_t record_id, uint8_t* buffer, uint16_t fragment_length, uint16_t fragment_offset, uint16_t* record_size);
 
 /******************************************************
  *          Variables Definitions
@@ -103,7 +106,8 @@ void wiced_bt_mesh_app_provision_server_init(uint8_t *p_priv_key, wiced_bt_mesh_
 
     // Initialize or reinitialize provisioning layer
     wiced_bt_mesh_core_provision_server_init(p_priv_key, mesh_app_provision_started, mesh_app_provision_end,
-        mesh_app_provision_get_capabilities, mesh_app_provision_get_oob, mesh_app_provision_gatt_send_cb);
+        mesh_app_provision_get_capabilities, mesh_app_provision_get_oob, mesh_app_provision_gatt_send_cb,
+        mesh_app_provision_records_get, mesh_app_provision_record_request);
 }
 
 /*
@@ -209,4 +213,32 @@ wiced_bool_t mesh_app_provision_get_capabilities(uint32_t conn_id)
     // now we can proceed
     wiced_bt_mesh_core_provision_set_capabilities(conn_id, &capabilities);
     return WICED_TRUE;
+}
+
+
+/**
+ * @brief get list of provisioning records
+ *
+ * @param buffer - pointer to save the list of record ids
+ * @return uint16_t - size of the return list of records
+ */
+uint16_t mesh_app_provision_records_get(uint16_t *buffer)
+{
+    return wiced_bt_factory_config_provisioning_records_get(buffer);
+}
+
+
+/**
+ * @brief read fragment of the provisioning record
+ *
+ * @param record_id - provisioning record id to read
+ * @param buffer - pointer to save fragment of the record
+ * @param fragment_length - size of the fragment to read
+ * @param fragment_offset - offset of fragment to read from start of the record
+ * @param record_size - pointer to the return parameter that returns full record size
+ * @return uint16_t - size of the fragment that was actually read into buffer
+ */
+uint16_t mesh_app_provision_record_request(uint16_t record_id, uint8_t* buffer, uint16_t fragment_length, uint16_t fragment_offset, uint16_t* record_size)
+{
+    return wiced_bt_factory_config_provisioning_record_req(record_id, buffer, fragment_length, fragment_offset, record_size);
 }

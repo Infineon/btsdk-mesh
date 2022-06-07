@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2021, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -121,7 +121,7 @@ extern "C"
 #ifdef _DEB_COMMAND_SERVICE
 #define MESH_COMMAND_START_SCAN_UNPROVISIONED     1       // <cmd=1>(1 byte). Start sending UUIDs of detected unprovisioned devices
 #define MESH_COMMAND_STOP_SCAN_UNPROVISIONED      2       // <cmd=2>(1 byte). Stops sending UUIDs of detected unprovisioned devices
-#define MESH_COMMAND_PROVISION                    3       // <cmd=3>(1 byte), <uuid>(16bytes), <addr>(2bytes). Starts provisionning of device with uuid and assigns addrt to it
+#define MESH_COMMAND_PROVISION                    3       // <cmd=3>(1 byte), <uuid>(16bytes), <addr>(2bytes). Starts provisioning of device with uuid and assigns addrt to it
 #define MESH_COMMAND_RESET_NODE                   4       // <cmd=4>(1 byte). Resets node and makes it unprovisioned
 
 #define MESH_COMMAND_EVENT_UNPROVISIONED_DEV      1       // <event=1>(1 byte), <uuid>(16bytes). Detected unprovisioned device
