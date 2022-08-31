@@ -129,14 +129,14 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .client_max_links               = 1,                                                         // Client config: maximum number of servers that local client can connect to
         .server_max_links               = 1,                                                         // Server config: maximum number of remote clients connections allowed by the local
         .max_attr_len                   = 357,                                                       // Maximum attribute length; gki_cfg must have a corresponding buffer pool that can hold this length
-#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1)  || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
+#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20835B1)  || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
         .max_mtu_size                   = 360                                                        // Maximum MTU size for GATT connections, should be between 23 and (max_attr_len + 5)
 #endif
 },
 
     .rfcomm_cfg =                                                                                    // RFCOMM configuration
     {
-        .max_links                      = 0,                                                         // Maximum number of simultaneous connected remote devices*/
+        .max_links                      = 0,                                                         // Maximum number of simultaneous connected remote devices
         .max_ports                      = 0                                                          // Maximum number of simultaneous RFCOMM ports
     },
 
@@ -151,7 +151,7 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         /* LE L2cap connection-oriented channels configuration */
         .max_le_psm                     = 0,                                                         // Maximum number of application-managed LE PSMs
         .max_le_channels                = 0,                                                         // Maximum number of application-managed LE channels
-#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined (CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2) )
+#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20835B1) || defined (CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2) )
         /* LE L2cap fixed channel configuration */
         .max_le_l2cap_fixed_channels    = 0                                                            // Maximum number of application managed fixed channels supported (in addition to mandatory channels 4, 5 and 6).
 #endif
@@ -168,10 +168,10 @@ wiced_bt_cfg_settings_t wiced_bt_cfg_settings =
         .max_links                      = 0                                                          // Maximum simultaneous remote control links
     },
     .addr_resolution_db_size            = 0,                                                         // LE Address Resolution DB settings - effective only for pre 4.2 controller
-#if ( defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
+#if ( defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) ||defined(CYW20719B2) || defined(CYW20721B2) )
     .max_number_of_buffer_pools         = 4,                                                         // Maximum number of buffer pools in p_btm_cfg_buf_pools and by wiced_create_pool
     .rpa_refresh_timeout                = 0,                                                         // Interval of  random address refreshing - secs
-#if ( defined(CYW43012C0) || defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
+#if ( defined(CYW43012C0) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20820A1) || defined(CYW20719B2) || defined(CYW20721B2))
     .ble_filter_accept_list_size                = 0,                                                         // Maximum number of Filter Accept List devices allowed. Cannot be more than 128
 #endif
 #if ( defined(CYW20719B2) || defined(CYW20721B2) || defined(CYW20819A1) || defined (CYW20820A1) )

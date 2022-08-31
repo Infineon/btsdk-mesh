@@ -61,6 +61,9 @@
 #endif
 #endif
 
+ // Enables the support of the HCI command to get delay statistics
+//#define _DEB_SUPPORT_GET_DELAY_STATISTICS
+
 // Enables HCI trace to first(same as app download) com port.
 //#define _DEB_ENABLE_HCI_TRACE
 #define _DEB_ENABLE_HCI_TRACE_NO_BLE_ADV_EVT
@@ -69,6 +72,11 @@ static void  mesh_hci_trace_cback(wiced_bt_hci_trace_type_t type, uint16_t lengt
 #ifdef DIRECTED_FORWARDING_SERVER_SUPPORTED
 #if defined HCI_CONTROL
 void mesh_df_stats_hci_event_send(void);
+#endif
+#endif
+#ifdef _DEB_SUPPORT_GET_DELAY_STATISTICS
+#if defined HCI_CONTROL
+void mesh_core_delay_stats_hci_event_send(void);
 #endif
 #endif
 
@@ -116,7 +124,7 @@ void mesh_app_hci_init(void)
     //For the 24 MHz board set the UART type as WICED_ROUTE_DEBUG_TO_PUART
     // For BCM920706V2_EVAL board make sure SW5.2 and SW5.4 are ON and all other SW5 are off
     wiced_set_debug_uart(WICED_ROUTE_DEBUG_TO_PUART);
-#if (defined(CYW20706A2) || defined(CYW20735B0) || defined(CYW20719B0) || defined(CYW43012C0))
+#if (defined(CYW20706A2) || defined(CYW43012C0))
     wiced_hal_puart_select_uart_pads(WICED_PUART_RXD, WICED_PUART_TXD, 0, 0);
 #endif
 #ifdef PUART_BAUDRATE
@@ -289,6 +297,13 @@ uint32_t mesh_application_proc_rx_cmd(uint8_t *p_buffer, uint32_t length)
                 if (opcode == HCI_CONTROL_MESH_COMMAND_DF_STATS_GET)
                     mesh_df_stats_hci_event_send();
                 else
+#endif
+#endif
+#ifdef _DEB_SUPPORT_GET_DELAY_STATISTICS
+#if defined HCI_CONTROL
+                    if (opcode == HCI_CONTROL_MESH_COMMAND_CORE_DELAY_STATS_GET)
+                        mesh_core_delay_stats_hci_event_send();
+                    else
 #endif
 #endif
                 {
@@ -631,6 +646,33 @@ void mesh_df_stats_hci_event_send(void)
             result, stats.sent_df_access_msg_cnt, stats.received_df_access_msg_cnt,
             stats.sent_df_msg_cnt, stats.received_df_msg_cnt, stats.relayed_df_to_df_msg_cnt,
             stats.relayed_df_to_flood_msg_cnt, stats.relayed_flood_to_df_msg_cnt, stats.relayed_flood_to_flood_msg_cnt);
+    }
+}
+#endif
+#endif
+
+#ifdef _DEB_SUPPORT_GET_DELAY_STATISTICS
+#if defined HCI_CONTROL
+/*
+ * Send delay statistics Status event over transport
+ */
+void mesh_core_delay_stats_hci_event_send(void)
+{
+    wiced_result_t                          result;
+    wiced_bt_mesh_core_delay_statistics_t   stats;
+    wiced_bt_mesh_hci_event_t* p_hci_event;
+
+    if (NULL == (p_hci_event = wiced_bt_mesh_create_hci_event(NULL)))
+    {
+        WICED_BT_TRACE("no buffer\n");
+    }
+    else
+    {
+        wiced_bt_mesh_core_delay_statistics_get(&stats);
+        wiced_bt_mesh_core_delay_statistics_reset();
+        memcpy(p_hci_event->data, &stats, sizeof(stats));
+        result = mesh_transport_send_data(HCI_CONTROL_MESH_EVENT_CORE_DELAY_STATS_STATUS, (uint8_t*)p_hci_event, (uint16_t)(&p_hci_event->data[sizeof(stats)] - (uint8_t*)p_hci_event));
+        WICED_BT_TRACE("sent delay stats: result:%d cnt/delay: rx:%d/%d tx:%d/%d\n", result, stats.rx_cnt, stats.rx_delay, stats.tx_cnt, stats.tx_delay);
     }
 }
 #endif

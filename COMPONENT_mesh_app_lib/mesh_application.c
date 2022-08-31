@@ -79,7 +79,7 @@
 #include "mesh_application.h"
 #include "hci_control_api.h"
 #include "wiced_memory.h"
-#if ( defined(CYW20735B0) || defined(CYW20735B1) || defined(CYW20835B1) )
+#if ( defined(CYW20835B1) )
 #include "wiced_gki.h"
 #endif
 #include "wiced_bt_ota_firmware_upgrade.h"
@@ -95,12 +95,16 @@
 #include "wiced_hal_rand.h"
 #include "wiced_bt_l2c.h"
 #include "wiced_bt_dev.h"
-#if ( defined(CYW20706A2) || defined(CYW20719B1) || defined(CYW20719B0) || defined(CYW20721B1) || defined(CYW20735B0) || defined(CYW43012C0) )
+#if ( defined(CYW20706A2) || defined(CYW20719B1) || defined(CYW20721B1) || defined(CYW43012C0) )
 #include "wiced_bt_app_common.h"
 #endif
 //#define _DEB_DELAY_START_SEC 10
 #ifdef _DEB_DELAY_START_SEC
 #include "wiced_timer.h"
+#endif
+
+#if defined(CYW20706A2)
+#include "wiced_memory_pre_init.h"
 #endif
 
 // Comment out next line if we don't want to support GATT provisioning
@@ -116,17 +120,13 @@ wiced_result_t mesh_application_process_hci_cmd(uint16_t opcode, const uint8_t *
 wiced_result_t mesh_application_send_hci_event(uint16_t opcode, const uint8_t *p_data, uint16_t data_len);
 #endif
 
-#if defined(CYW20719B0)
-void wiced_bt_set_pairable_mode(uint8_t allow_pairing, uint8_t connect_only_paired);
-#endif
-
 /******************************************************
  *          Constants
  ******************************************************/
 // The power table is 3, -1, -5, -9
 #define TX_DBM   4
 
-#if !defined(CYW43012C0) && !defined(CYW20706A2) && !defined(CYW20719B0)
+#if !defined(CYW43012C0) && !defined(CYW20706A2)
 extern wiced_platform_button_config_t platform_button[];
 #endif
 
@@ -167,10 +167,6 @@ typedef PACKED struct
 
 // current value of own SEQ and RPL size
 static mesh_app_rpl_init_t mesh_app_rpl_init = { 0 };
-#ifdef CYW20706A2
-// On 20706 we keep all RPL entries in the one NVRAM index
-static mesh_app_rpl_item_t *mesh_app_rpl_items = NULL;
-#endif
 
 // Application can set this handler to process if it implements models layer (including configuration).
 wiced_bt_mesh_core_received_msg_handler_t p_app_model_message_handler = NULL;
@@ -188,7 +184,7 @@ extern wiced_bt_cfg_settings_t* p_wiced_bt_mesh_cfg_settings;
 // Poll interval and poll time in the Fast Polling state which starts at the provisioning.
 // In that state the LPN uses short poll timeout 1 second(MESH_APP_FAST_POLL_TIMEOUT) during 30 seconds(MESH_APP_FAST_POLL_TIME) after provisioning.
 #define MESH_APP_FAST_POLL_TIMEOUT  1000
-#define MESH_APP_FAST_POLL_TIME     30000
+#define MESH_APP_FAST_POLL_TIME     10000
 
 // The time when LPN stops the Fast Polling state.
 // Non-0 value means the node is in the Fast Polling state.
@@ -215,6 +211,8 @@ static wiced_bool_t             mesh_application_seq_save(wiced_bt_mesh_core_sta
 static wiced_bool_t             mesh_application_seq_init(void);
 static wiced_bool_t             mesh_application_rpl_clr(void);
 
+// Uncomment below line to test OOB static data without Factory configuration
+//#define _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
 #define SECURE_PROVISIONING
 #ifdef SECURE_PROVISIONING
 static void mesh_app_process_oob_get(wiced_bt_mesh_provision_device_oob_request_data_t *p_data);
@@ -243,8 +241,13 @@ uint8_t static_private_key[WICED_BT_MESH_PROVISION_PRIV_KEY_LEN];
 uint8_t static_private_key_len = 0;
 
 // Static OOB Data should be written in static section flash during manufacturing
+#ifdef _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
+uint8_t static_oob_data[16] = { 0x96, 0x5c, 0xa5, 0xc9, 0x44, 0xb6, 0x4d, 0x57, 0x86, 0xb4, 0x7a, 0x29, 0x68, 0x5c, 0x8b, 0xac };
+uint8_t static_oob_data_len = 16;
+#else
 uint8_t static_oob_data[16];
 uint8_t static_oob_data_len = 0;
+#endif
 #endif
 
 #define STATIC_UUID
@@ -320,6 +323,20 @@ wiced_bt_mesh_core_hal_api_t mesh_app_hal_api =
 /******************************************************
  *               Function Definitions
  ******************************************************/
+#if defined(CYW20706A2)
+WICED_MEM_PRE_INIT_CONTROL g_mem_pre_init =
+{
+    .scanRssiThresholdDeviceListSize = 5,
+    .lm_cmdQueueAreaSize = WICED_MEM_PRE_INIT_IGNORE,
+    .aclDownBufSize = 264,
+    .aclUpBufSize = 512,
+    .aclDownCount = 1,
+    .aclUpCount = 3,
+    .rmulpMaxLLConnection = 2,
+    .ulp_rl_maxSize = 1,
+};
+//extern void print_wiced_memory_pre_init(void);
+#endif
 
 /*
 *  Entry point to the application. Set device configuration and start Bluetooth
@@ -327,7 +344,7 @@ wiced_bt_mesh_core_hal_api_t mesh_app_hal_api =
 *  when stack reports that Bluetooth device is ready.
 */
 #ifndef MESH_HOMEKIT_COMBO_APP
-#if (defined(CYW20719B0) || defined(CYW20719B1) || defined(CYW20721B1) ||  defined(CYW20706A2))
+#if (defined(CYW20719B1) || defined(CYW20721B1) ||  defined(CYW20706A2))
 APPLICATION_START()
 #else
 void application_start(void)
@@ -352,9 +369,6 @@ void mesh_application_start()
         wiced_hal_gpio_configure_pin(WICED_GPIO_BUTTON, WICED_GPIO_BUTTON_SETTINGS(GPIO_EN_INT_BOTH_EDGE), WICED_GPIO_BUTTON_DEFAULT_STATE);
         wiced_hal_gpio_register_pin_for_interrupt(WICED_GPIO_BUTTON, mesh_interrupt_handler, NULL);
 #elif defined(CYW43012C0)
-#elif (defined(CYW20735B0) || defined(CYW20719B0) || defined(CYW20721B0))
-        wiced_hal_gpio_register_pin_for_interrupt(WICED_GPIO_PIN_BUTTON, mesh_interrupt_handler, NULL);
-        wiced_hal_gpio_configure_pin(WICED_GPIO_PIN_BUTTON, WICED_GPIO_BUTTON_SETTINGS, GPIO_PIN_OUTPUT_LOW);
 #else
         wiced_platform_register_button_callback(WICED_PLATFORM_BUTTON_1, mesh_interrupt_handler, NULL, GPIO_EN_INT_BOTH_EDGE);
 #endif
@@ -365,8 +379,14 @@ void mesh_application_start()
 #endif
 #endif
     // Currently we can support up to 4 network keys.
+#if defined(CYW20706A2)
+    // On 20876 we support 1 network with two app keys
+    wiced_bt_mesh_core_net_key_max_num = 1;
+    wiced_bt_mesh_core_app_key_max_num = 2;
+#else
     wiced_bt_mesh_core_net_key_max_num = 4;
     wiced_bt_mesh_core_app_key_max_num = 8;
+#endif
     wiced_bt_mesh_scene_max_num            = 10;
     wiced_bt_mesh_scheduler_events_max_num = 16; // PTS test uses index 15 (MMDL/SR/SCHS/BV-01-C )
 
@@ -531,6 +551,12 @@ void mesh_application_hard_reset(uint8_t *uuid, uint8_t uuid_len)
             WICED_BT_TRACE("failed to set UUID result:%x\n", result);
         }
     }
+    else if (uuid_len != 0)
+    {
+        // Restart device on invalid param length
+        wiced_hal_wdog_reset_system();
+        return;
+    }
     mesh_application_factory_reset();
 }
 
@@ -563,7 +589,17 @@ void mesh_application_init(void)
 
     wiced_bt_mesh_core_set_hal_api(&mesh_app_hal_api);
 
-// On 20719B0 wiced_init_timer() fails if it called from APPLICATION_START.
+#ifndef PTS
+    // Measurements on all platforms show 4 ms tx delay and 0 ms rx delay. It corresponds to delta_tx=1 and delta_rx=0 in units of 1/256th second.
+    wiced_bt_mesh_core_msg_tx_delay = 1;
+    wiced_bt_mesh_core_msg_rx_delay = 0;
+#endif
+
+    // If scheduler is supported then try to get time every 5 seconds while time is unknown
+#ifdef TIME_AND_SCHEDULER_SUPPORT
+    wiced_bt_mesh_model_timer_server_get_interval = 5;
+#endif
+
 #ifndef WICEDX_LINUX
 #ifdef WICED_BT_TRACE_ENABLE
     mesh_app_timer_init();
@@ -572,7 +608,7 @@ void mesh_application_init(void)
 
 #ifndef MESH_HOMEKIT_COMBO_APP
     /* Initialize wiced app */
-#if (!defined(CYW20735B1) && !defined(CYW20835B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
+#if (!defined(CYW20835B1) && !defined(CYW20819A1) && !defined(CYW20719B2) && !defined(CYW20721B2))
     wiced_bt_app_init();
 #endif
 
@@ -657,8 +693,10 @@ void mesh_application_init(void)
             av_private_key = TRUE;
 #endif
         }
+#ifndef _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
         // Check if we have OOB Static Data programmed at the factory
         static_oob_data_len = wiced_bt_factory_config_read(WICED_BT_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA, static_oob_data, sizeof(static_oob_data), 0, &record_size);
+#endif
         if (static_oob_data_len != 0)
         {
             WICED_BT_TRACE_ARRAY(static_oob_data, static_oob_data_len, "static OOB:");
@@ -875,7 +913,7 @@ void mesh_interrupt_handler(void* user_data, uint8_t pin)
     //WICED_BT_TRACE("interrupt_handler: pin:%d value:%d time:%d\n", pin, value, curr_time);
 
     // On push just remember current time.
-#if !defined(CYW43012C0) && !defined(CYW20706A2) && !defined(CYW20719B0)
+#if !defined(CYW43012C0) && !defined(CYW20706A2)
     if (value == platform_button[WICED_PLATFORM_BUTTON_1].button_pressed_value)
 #else
     if (value == 0)
@@ -1153,7 +1191,7 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
         break;
 
     case WICED_BT_MESH_CORE_STATE_TYPE_SEQ:
-#ifdef DONT_SAVE_RPL
+#ifndef SAVE_RPL
         // If it is not own SEQ then drop that callback. It will make RPL empty on restart.
         if (p_state->seq.addr != 0)
             break;
@@ -1278,7 +1316,7 @@ static void mesh_state_changed_cb(wiced_bt_mesh_core_state_type_t type, wiced_bt
                 if (p_state->lpn_sleep > MESH_APP_FAST_POLL_TIMEOUT)
                     p_state->lpn_sleep = MESH_APP_FAST_POLL_TIMEOUT;
 
-                WICED_BT_TRACE("Fast Polling received_access_layer_msg_cnt\n", stats.received_access_layer_msg_cnt);
+                WICED_BT_TRACE("Fast Polling received_access_layer_msg_cnt %d\n", stats.received_access_layer_msg_cnt);
                 break;
             }
             // Fast Polling state is expired. Reset Fast Polling state.
@@ -1454,29 +1492,8 @@ wiced_bool_t mesh_application_seq_init(void)
         return WICED_FALSE;
 
     // read RPL items from NVRAM and set them to the node
-#ifdef CYW20706A2
-    // On 20706 RPL size is hardcoded.
-    // Make sure size is correct
-    if(mesh_app_rpl_init.size > mesh_config.replay_cache_size)
-        return WICED_FALSE;
-    //Allocate memory for full RPL and read RPL entries from the NVRAM
-    mesh_app_rpl_items = (mesh_app_rpl_item_t*)wiced_memory_permanent_allocate(mesh_config.replay_cache_size * sizeof(mesh_app_rpl_item_t));
-    // Read RPL if it isn't empty
-    if (mesh_app_rpl_init.size != 0)
-    {
-        len = mesh_app_rpl_init.size * sizeof(mesh_app_rpl_item_t);
-        if (len != mesh_nvram_access(WICED_FALSE, mesh_nvm_idx_seq - 1, (uint8_t*)mesh_app_rpl_items, len, &result) || result != 0)
-            return WICED_FALSE;
-    }
-    // Set RPL into the core lib
-    for (i = 0; i < mesh_app_rpl_init.size; i++)
-    {
-        p = mesh_app_rpl_items[i].seq;
-        STREAM_TO_UINT24(seq, p);
-        if (!wiced_bt_mesh_core_set_seq(mesh_app_rpl_items[i].addr & (~MESH_APP_RPL_ITEM_PREV_IVI_FLAG), seq, (mesh_app_rpl_items[i].addr & MESH_APP_RPL_ITEM_PREV_IVI_FLAG) != 0 ? WICED_TRUE : WICED_FALSE))
-            return WICED_FALSE;
-    }
-#else
+    // We don't save RPL on 20706
+#ifndef CYW20706A2
     for (i = 0; i < mesh_app_rpl_init.size; i++)
     {
         if (sizeof(rpl_item) != mesh_nvram_access(WICED_FALSE, mesh_nvm_idx_seq - 1 - i, (uint8_t*)&rpl_item, sizeof(rpl_item), &result) || result != 0)
@@ -1529,42 +1546,13 @@ wiced_bool_t mesh_application_seq_save(wiced_bt_mesh_core_state_seq_t *p_seq)
     else
     {
         // save RPL entry
-        uint8_t                 *p;
-#ifdef CYW20706A2
-        uint32_t                len;
-        mesh_app_rpl_item_t     *p_rpl_item;
-
-        // On 20706 RPL size is hardcoded. Make sure index is inside that size
-        if (p_seq->rpl_entry_idx >= mesh_config.replay_cache_size)
-            return WICED_FALSE;
-
-        // If new record has to be added
-        if (p_seq->rpl_entry_idx >= mesh_app_rpl_init.size)
-        {
-            // delete (set invalid group address 0x8000) probably existing records for unknown indices. It is possible because we save RPL entries on successfull message handling
-            while (mesh_app_rpl_init.size < p_seq->rpl_entry_idx)
-                mesh_app_rpl_items[mesh_app_rpl_init.size++].addr = 0x8000;
-            mesh_app_rpl_init.size = p_seq->rpl_entry_idx + 1;
-            // update RPL_INIT NVRAM data with new RPL size
-            if (sizeof(mesh_app_rpl_init) != mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq, (uint8_t*)&mesh_app_rpl_init, sizeof(mesh_app_rpl_init), &result) || result != 0)
-                return WICED_FALSE;
-        }
-
-        p_rpl_item = &mesh_app_rpl_items[p_seq->rpl_entry_idx];
-        p_rpl_item->addr = p_seq->addr;
-        if (p_seq->previous_iv_idx)
-            p_rpl_item->addr |= MESH_APP_RPL_ITEM_PREV_IVI_FLAG;
-        p = p_rpl_item->seq;
-        UINT24_TO_STREAM(p, p_seq->seq);
-        len = mesh_app_rpl_init.size * sizeof(mesh_app_rpl_item_t);
-        if (len != mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq - 1, (uint8_t*)mesh_app_rpl_items, len, &result) || result != 0)
-            return WICED_FALSE;
-#else
+        // We don't save RPL on 20706
+#ifndef CYW20706A2
         mesh_app_rpl_item_t     rpl_item;
         rpl_item.addr = p_seq->addr;
         if (p_seq->previous_iv_idx)
             rpl_item.addr |= MESH_APP_RPL_ITEM_PREV_IVI_FLAG;
-        p = rpl_item.seq;
+        uint8_t* p = rpl_item.seq;
         UINT24_TO_STREAM(p, p_seq->seq);
         if (sizeof(rpl_item) != mesh_nvram_access(WICED_TRUE, mesh_nvm_idx_seq - 1 - p_seq->rpl_entry_idx, (uint8_t*)&rpl_item, sizeof(rpl_item), &result) || result != 0)
             return WICED_FALSE;

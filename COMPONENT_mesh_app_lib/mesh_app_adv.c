@@ -707,7 +707,7 @@ wiced_bool_t mesh_app_adv_send_callback(uint8_t instance, uint8_t transmissions,
         return WICED_FALSE;
     }
 
-#if ( defined(CYW20735B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20721B2) || defined(CYW20719B2)) || defined (NEW_WICED_STACK)
+#if ( defined(CYW20835B1) || defined(CYW20835B1) || defined(CYW20819A1) || defined(CYW20721B2) || defined(CYW20719B2)) || defined (NEW_WICED_STACK)
     {
         wiced_bt_ble_multi_adv_params_t params = {
             .adv_int_min = interval,
