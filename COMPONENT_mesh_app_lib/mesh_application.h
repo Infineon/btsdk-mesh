@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -153,5 +153,5 @@ uint16_t mesh_application_mcu_memory_read(uint16_t id, uint16_t buf_len, uint8_t
 uint16_t mesh_application_mcu_memory_write(uint16_t id, uint16_t data_len, const uint8_t *p_data);
 wiced_result_t mesh_application_process_hci_cmd(uint16_t opcode, const uint8_t *p_data, uint16_t data_len);
 wiced_result_t mesh_application_send_hci_event(uint16_t opcode, const uint8_t *p_data, uint16_t data_len);
-
+void mesh_app_aes_encrypt(uint8_t* in_data, uint8_t* out_data, uint8_t* key);
 #endif // __MESH_APPLICATION_H__

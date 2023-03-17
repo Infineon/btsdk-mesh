@@ -30,18 +30,81 @@
  * of such system or application assumes all risk of such use and in doing
  * so agrees to indemnify Cypress against all liability.
  */
-#define KEY_LENGTH_DWORDS_P256 8
 
-struct _point
-{
-    unsigned long x[KEY_LENGTH_DWORDS_P256];
-    unsigned long y[KEY_LENGTH_DWORDS_P256];
-    unsigned long z[KEY_LENGTH_DWORDS_P256];
-};
+/** @file
+ *
+ * Mesh AES encryption related functionality
+ *
+ */
 
-// public key
-struct _point ecdsa256_public_key =
+#include "bt_types.h"
+#include "wiced_bt_gatt.h"
+#include "wiced_hal_aes.h"
+#include "wiced_bt_mesh_core.h"
+#include "mesh_application.h"
+#include "wiced_bt_trace.h"
+
+// TBD: below code has to be moved to the middleware/WICED layer
+// ---------------------------------- Code for WICED layer
+#if defined(CYW20706A2)
+static void wiced_request_aes_exclusive_access()
 {
-    { 0xf547b663, 0x161f513c, 0xad99b581, 0xd11145d2, 0x469588c5, 0xab61f3c5, 0xa044d076, 0xfc9e6e12, },
-    { 0xb9958224, 0xe551d2ee, 0xe2e42ba9, 0x0d00654c, 0x040d35d1, 0x7830a15c, 0x7222adfb, 0x1081ebc5, },
-};
+}
+
+static void wiced_release_aes_exclusive_access()
+{
+}
+#else
+extern unsigned int _tx_v7m_get_and_disable_int(void);
+extern void _tx_v7m_set_int(unsigned int posture);
+extern void bcs_pmuWaitForBtClock(void);
+extern void bcs_pmuReleaseBtClock(void);
+
+
+static unsigned int interrupt_save;
+#define osapi_LOCK_CONTEXT          { interrupt_save = _tx_v7m_get_and_disable_int(); };
+#define osapi_UNLOCK_CONTEXT        { _tx_v7m_set_int(interrupt_save); };
+
+static void wiced_request_aes_exclusive_access()
+{
+    bcs_pmuWaitForBtClock();
+    osapi_LOCK_CONTEXT;
+}
+
+static void wiced_release_aes_exclusive_access()
+{
+    osapi_UNLOCK_CONTEXT;
+    bcs_pmuReleaseBtClock();
+}
+#endif
+// ---------------------------------- End of code WICED layer
+
+void mesh_app_aes_encrypt(uint8_t* in_data, uint8_t* out_data, uint8_t* key)
+{
+    uint8_t temp_data[WICED_BT_MESH_KEY_LEN];
+    uint8_t temp_key[WICED_BT_MESH_KEY_LEN];
+    int i, j;
+    // Copy in_data and key to the temp buffers and revert data in these buffers
+    for (i = 0, j = (WICED_BT_MESH_KEY_LEN - 1); i < WICED_BT_MESH_KEY_LEN; i++, j--)
+    {
+        temp_data[i] = in_data[j];
+        temp_key[i] = key[j];
+    }
+
+    wiced_request_aes_exclusive_access();
+    wiced_bcsulp_AES(temp_key, temp_data, out_data);
+    wiced_release_aes_exclusive_access();
+
+    // Revert data in out_data
+    i = 0;
+    j = WICED_BT_MESH_KEY_LEN - 1;
+
+    while (i < j)
+    {
+        out_data[i] = out_data[i] ^ out_data[j];
+        out_data[j] = out_data[i] ^ out_data[j];
+        out_data[i] = out_data[i] ^ out_data[j];
+        i++;
+        j--;
+    }
+}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+ * Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
  * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
  *
  * This software, including source code, documentation and related
@@ -74,6 +74,9 @@
 #endif
 #ifdef PRIVATE_PROXY_SUPPORTED
 #include "wiced_bt_mesh_private_proxy.h"
+#endif
+#ifdef SAR_CONFIGURATION_SUPPORTED
+#include "wiced_bt_mesh_sar.h"
 #endif
 #include "wiced_bt_trace.h"
 #include "mesh_application.h"
@@ -214,6 +217,15 @@ static wiced_bool_t             mesh_application_rpl_clr(void);
 // Uncomment below line to test OOB static data without Factory configuration
 //#define _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
 #define SECURE_PROVISIONING
+// For PTS tests always define SECURE_PROVISIONING and _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
+#ifdef PTS
+  #ifndef _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
+    #define _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
+  #endif
+  #ifndef SECURE_PROVISIONING
+    #define SECURE_PROVISIONING
+  #endif
+#endif
 #ifdef SECURE_PROVISIONING
 static void mesh_app_process_oob_get(wiced_bt_mesh_provision_device_oob_request_data_t *p_data);
 static void mesh_app_provision_message_handler(uint16_t event, void *p_data);
@@ -242,6 +254,7 @@ uint8_t static_private_key_len = 0;
 
 // Static OOB Data should be written in static section flash during manufacturing
 #ifdef _DEB_FACTORY_CONFIG_ITEM_OOB_STATIC_DATA
+// For EPA PTS tests set bellow oob data with 0 padding to TSPX_OOB_code=965ca5c944b64d5786b47a29685c8bac00000000000000000000000000000000
 uint8_t static_oob_data[16] = { 0x96, 0x5c, 0xa5, 0xc9, 0x44, 0xb6, 0x4d, 0x57, 0x86, 0xb4, 0x7a, 0x29, 0x68, 0x5c, 0x8b, 0xac };
 uint8_t static_oob_data_len = 16;
 #else
@@ -317,7 +330,8 @@ wiced_bt_mesh_core_hal_api_t mesh_app_hal_api =
     .wdog_reset_system = wiced_hal_wdog_reset_system,
     .delete_nvram = wiced_hal_delete_nvram,
     .write_nvram = mesh_app_wiced_hal_write_nvram,
-    .read_nvram = mesh_app_wiced_hal_read_nvram
+    .read_nvram = mesh_app_wiced_hal_read_nvram,
+    .aes_encrypt = mesh_app_aes_encrypt     // It should be different function for 20829
 };
 
 /******************************************************
@@ -633,9 +647,6 @@ void mesh_application_init(void)
     memcpy(init.provisioned_bda, init.non_provisioned_bda, sizeof(wiced_bt_device_address_t));
     memcpy(&init.device_uuid[0], init.non_provisioned_bda, 6);
     memset(&init.device_uuid[6], 0x0f, 16 - 6);
-    // Some PTS tests require retrans count bigger then 1 for multicast addr. Default value is 1
-    extern uint8_t wiced_bt_core_lower_transport_seg_trans_cnt_group;
-    wiced_bt_core_lower_transport_seg_trans_cnt_group = 3;
 #else
     if (mesh_nvram_access(WICED_FALSE, NVRAM_ID_LOCAL_UUID, init.device_uuid, 16, &result) != 16)
     {
@@ -802,7 +813,7 @@ void mesh_application_init(void)
 
         /* Presense of the private key in the static memory isn't good indication that public key is available as OOB */
         /* Using this only as circumstantial evidence. Could be improved upon */
-        provision_caps.pub_key_type      = static_private_key_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_PUB_KEY_TYPE_AVAILABLE : 0;
+        provision_caps.pub_key_type      = static_private_key_len != 0 || pb_priv_key != 0 ? WICED_BT_MESH_PROVISION_CAPS_PUB_KEY_TYPE_AVAILABLE : 0;
         provision_caps.static_oob_type   = static_oob_data_len != 0 ? WICED_BT_MESH_PROVISION_CAPS_STATIC_OOB_TYPE_AVAILABLE : 0;
         provision_caps.output_oob_action = 0;
         provision_caps.output_oob_size   = 0;
@@ -1120,6 +1131,10 @@ wiced_bt_mesh_core_received_msg_handler_t get_msg_handler_callback(uint16_t comp
          ((model_id != WICED_BT_MESH_CORE_MODEL_ID_CONFIG_CLNT) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_SRV) &&
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_REMOTE_PROVISION_CLNT) &&
+#ifdef SAR_CONFIGURATION_SUPPORTED
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_SAR_CONFIG_SRV) &&
+          (model_id != WICED_BT_MESH_CORE_MODEL_ID_SAR_CONFIG_CLNT) &&
+#endif
           (model_id != WICED_BT_MESH_CORE_MODEL_ID_GENERIC_DEFTT_CLNT))))
     {
         p_message_handler = p_app_model_message_handler;

@@ -1,5 +1,5 @@
 /*
-* Copyright 2016-2022, Cypress Semiconductor Corporation (an Infineon company) or
+* Copyright 2016-2023, Cypress Semiconductor Corporation (an Infineon company) or
 * an affiliate of Cypress Semiconductor Corporation.  All rights reserved.
 *
 * This software, including source code, documentation and related
@@ -344,7 +344,7 @@ static const uint8_t gatt_db_provisioned[]=
 
 typedef struct
 {
-    const uint16_t handle;
+    uint16_t handle;
     uint16_t attr_len;
     void     *p_attr;
 } attribute_t;
